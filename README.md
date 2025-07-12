@@ -1,6 +1,6 @@
 # Instagram Chatbot 🤖
 
-A comprehensive Instagram chatbot built with Node.js and Express that uses the Instagram Graph API to receive and respond to direct messages.
+A comprehensive Instagram chatbot built with Node.js and Express that uses the Instagram Graph API v23.0 to receive and respond to direct messages.
 
 ## Features ✨
 
@@ -48,10 +48,11 @@ Before getting started, you'll need:
    PORT=3000
    NODE_ENV=development
    
-   # Instagram Graph API Configuration
+   # Instagram Graph API Configuration (v23.0)
    INSTAGRAM_ACCESS_TOKEN=your_instagram_access_token_here
    INSTAGRAM_APP_ID=your_app_id_here
    INSTAGRAM_APP_SECRET=your_app_secret_here
+   INSTAGRAM_ACCOUNT_ID=your_instagram_account_id_here
    
    # Webhook Configuration
    WEBHOOK_VERIFY_TOKEN=your_webhook_verify_token_here

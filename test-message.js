@@ -9,7 +9,7 @@ const axios = require('axios');
 require('dotenv').config();
 
 // Account IDs from your Facebook Developer Console
-const SENDER_ID = '1784147260142095';  // chatloom.in
+const SENDER_ID = process.env.INSTAGRAM_ACCOUNT_ID || '1784147260142095';  // chatloom.in
 const RECIPIENT_ID = '1784147210010479';  // _setty.naman_
 
 /**
@@ -32,7 +32,7 @@ async function sendTestMessage() {
     console.log(`Message: ${messageText}`);
     
     const response = await axios.post(
-      'https://graph.facebook.com/v18.0/me/messages',
+      `https://graph.instagram.com/v23.0/${SENDER_ID}/messages`,
       {
         recipient: {
           id: RECIPIENT_ID
@@ -80,7 +80,7 @@ async function testAccessToken() {
     console.log('🔍 Testing access token...');
     
     const response = await axios.get(
-      'https://graph.facebook.com/v18.0/me',
+      `https://graph.instagram.com/v23.0/${SENDER_ID}`,
       {
         params: {
           fields: 'id,name,username',

@@ -1,7 +1,7 @@
 const axios = require('axios');
 
 // Instagram Graph API base URL
-const BASE_URL = 'https://graph.facebook.com/v18.0';
+const BASE_URL = 'https://graph.instagram.com/v23.0';
 
 // Rate limiting
 const rateLimiter = {
@@ -38,7 +38,7 @@ const sendMessage = async (recipientId, messageText) => {
   
   try {
     const response = await axios.post(
-      `${BASE_URL}/me/messages`,
+      `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/messages`,
       {
         recipient: {
           id: recipientId
@@ -76,7 +76,7 @@ const sendQuickReply = async (recipientId, messageText, quickReplies) => {
   
   try {
     const response = await axios.post(
-      `${BASE_URL}/me/messages`,
+      `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/messages`,
       {
         recipient: {
           id: recipientId
@@ -116,7 +116,7 @@ const sendTypingIndicator = async (recipientId, action = 'typing_on') => {
   
   try {
     await axios.post(
-      `${BASE_URL}/me/messages`,
+      `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/messages`,
       {
         recipient: {
           id: recipientId
@@ -193,7 +193,7 @@ const getConversationHistory = async (userId) => {
   
   try {
     const response = await axios.get(
-      `${BASE_URL}/me/conversations`,
+      `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/conversations`,
       {
         params: {
           user_id: userId,
