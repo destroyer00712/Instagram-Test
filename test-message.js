@@ -13,6 +13,27 @@ const SENDER_ID = process.env.INSTAGRAM_ACCOUNT_ID || '1784147260142095';  // ch
 const RECIPIENT_ID = '1784147210010479';  // _setty.naman_
 
 /**
+ * Generate cURL command for debugging
+ */
+const generateCurl = (method, url, headers, data) => {
+  let curl = `curl --location --request ${method.toUpperCase()} '${url}'`;
+  
+  // Add headers
+  if (headers) {
+    Object.keys(headers).forEach(key => {
+      curl += ` \\\n  --header '${key}: ${headers[key]}'`;
+    });
+  }
+  
+  // Add data for POST requests
+  if (data && (method.toUpperCase() === 'POST' || method.toUpperCase() === 'PUT')) {
+    curl += ` \\\n  --data '${JSON.stringify(data)}'`;
+  }
+  
+  return curl;
+};
+
+/**
  * Send a test message
  */
 async function sendTestMessage() {
@@ -25,29 +46,33 @@ async function sendTestMessage() {
   
   const messageText = 'Hello from chatloom.in! 🤖 This is a test message from your Instagram bot.';
   
+  const url = `https://graph.instagram.com/v23.0/${SENDER_ID}/messages`;
+  const headers = {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json'
+  };
+  const data = {
+    recipient: {
+      id: RECIPIENT_ID
+    },
+    message: {
+      text: messageText
+    }
+  };
+  
   try {
     console.log('📤 Sending test message...');
     console.log(`From: chatloom.in (${SENDER_ID})`);
     console.log(`To: _setty.naman_ (${RECIPIENT_ID})`);
     console.log(`Message: ${messageText}`);
     
-    const response = await axios.post(
-      `https://graph.instagram.com/v23.0/${SENDER_ID}/messages`,
-      {
-        recipient: {
-          id: RECIPIENT_ID
-        },
-        message: {
-          text: messageText
-        }
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+    // Generate and log cURL command
+    const curlCommand = generateCurl('POST', url, headers, data);
+    console.log('\n🔧 Equivalent cURL command:');
+    console.log(curlCommand);
+    console.log('\n');
+    
+    const response = await axios.post(url, data, { headers });
     
     console.log('✅ Message sent successfully!');
     console.log('📋 Response:', JSON.stringify(response.data, null, 2));
@@ -78,6 +103,14 @@ async function testAccessToken() {
   
   try {
     console.log('🔍 Testing access token...');
+    
+    const url = `https://graph.instagram.com/v23.0/${SENDER_ID}?fields=id,name,username&access_token=${accessToken}`;
+    
+    // Generate and log cURL command
+    const curlCommand = generateCurl('GET', url, {}, null);
+    console.log('\n🔧 Equivalent cURL command for token test:');
+    console.log(curlCommand);
+    console.log('\n');
     
     const response = await axios.get(
       `https://graph.instagram.com/v23.0/${SENDER_ID}`,

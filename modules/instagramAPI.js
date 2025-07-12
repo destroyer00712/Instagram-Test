@@ -3,6 +3,27 @@ const axios = require('axios');
 // Instagram Graph API base URL
 const BASE_URL = 'https://graph.instagram.com/v23.0';
 
+/**
+ * Generate cURL command for debugging
+ */
+const generateCurl = (method, url, headers, data) => {
+  let curl = `curl --location --request ${method.toUpperCase()} '${url}'`;
+  
+  // Add headers
+  if (headers) {
+    Object.keys(headers).forEach(key => {
+      curl += ` \\\n  --header '${key}: ${headers[key]}'`;
+    });
+  }
+  
+  // Add data for POST requests
+  if (data && (method.toUpperCase() === 'POST' || method.toUpperCase() === 'PUT')) {
+    curl += ` \\\n  --data '${JSON.stringify(data)}'`;
+  }
+  
+  return curl;
+};
+
 // Rate limiting
 const rateLimiter = {
   requests: [],
@@ -36,24 +57,27 @@ const sendMessage = async (recipientId, messageText) => {
     throw new Error('Rate limit exceeded');
   }
   
+  const url = `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/messages`;
+  const headers = {
+    'Authorization': `Bearer ${process.env.INSTAGRAM_ACCESS_TOKEN}`,
+    'Content-Type': 'application/json'
+  };
+  const data = {
+    recipient: {
+      id: recipientId
+    },
+    message: {
+      text: messageText
+    }
+  };
+  
+  // Generate and log cURL command
+  const curlCommand = generateCurl('POST', url, headers, data);
+  console.log('🔧 Equivalent cURL command:');
+  console.log(curlCommand);
+  
   try {
-    const response = await axios.post(
-      `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/messages`,
-      {
-        recipient: {
-          id: recipientId
-        },
-        message: {
-          text: messageText
-        }
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.INSTAGRAM_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+    const response = await axios.post(url, data, { headers });
     
     console.log('✅ Message sent successfully:', response.data);
     return response.data;
@@ -74,29 +98,32 @@ const sendQuickReply = async (recipientId, messageText, quickReplies) => {
     throw new Error('Rate limit exceeded');
   }
   
+  const url = `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/messages`;
+  const headers = {
+    'Authorization': `Bearer ${process.env.INSTAGRAM_ACCESS_TOKEN}`,
+    'Content-Type': 'application/json'
+  };
+  const data = {
+    recipient: {
+      id: recipientId
+    },
+    message: {
+      text: messageText,
+      quick_replies: quickReplies.map(reply => ({
+        content_type: 'text',
+        title: reply.title,
+        payload: reply.payload
+      }))
+    }
+  };
+  
+  // Generate and log cURL command
+  const curlCommand = generateCurl('POST', url, headers, data);
+  console.log('🔧 Equivalent cURL command:');
+  console.log(curlCommand);
+  
   try {
-    const response = await axios.post(
-      `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/messages`,
-      {
-        recipient: {
-          id: recipientId
-        },
-        message: {
-          text: messageText,
-          quick_replies: quickReplies.map(reply => ({
-            content_type: 'text',
-            title: reply.title,
-            payload: reply.payload
-          }))
-        }
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.INSTAGRAM_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+    const response = await axios.post(url, data, { headers });
     
     console.log('✅ Quick reply sent successfully:', response.data);
     return response.data;
@@ -114,22 +141,25 @@ const sendTypingIndicator = async (recipientId, action = 'typing_on') => {
     return; // Skip typing indicator if rate limited
   }
   
+  const url = `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/messages`;
+  const headers = {
+    'Authorization': `Bearer ${process.env.INSTAGRAM_ACCESS_TOKEN}`,
+    'Content-Type': 'application/json'
+  };
+  const data = {
+    recipient: {
+      id: recipientId
+    },
+    sender_action: action
+  };
+  
+  // Generate and log cURL command
+  const curlCommand = generateCurl('POST', url, headers, data);
+  console.log('🔧 Equivalent cURL command for typing indicator:');
+  console.log(curlCommand);
+  
   try {
-    await axios.post(
-      `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/messages`,
-      {
-        recipient: {
-          id: recipientId
-        },
-        sender_action: action
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.INSTAGRAM_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+    await axios.post(url, data, { headers });
     
     console.log(`✅ Typing indicator sent: ${action}`);
   } catch (error) {
