@@ -60,7 +60,8 @@ const sendMessage = async (recipientId, messageText) => {
   const url = `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/messages`;
   const headers = {
     'Authorization': `Bearer ${process.env.INSTAGRAM_ACCESS_TOKEN}`,
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json',
+    'Accept-Language': 'en-US,en;q=0.9'
   };
   const data = {
     recipient: {
@@ -101,7 +102,8 @@ const sendQuickReply = async (recipientId, messageText, quickReplies) => {
   const url = `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/messages`;
   const headers = {
     'Authorization': `Bearer ${process.env.INSTAGRAM_ACCESS_TOKEN}`,
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json',
+    'Accept-Language': 'en-US,en;q=0.9'
   };
   const data = {
     recipient: {
@@ -144,7 +146,8 @@ const sendTypingIndicator = async (recipientId, action = 'typing_on') => {
   const url = `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/messages`;
   const headers = {
     'Authorization': `Bearer ${process.env.INSTAGRAM_ACCESS_TOKEN}`,
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json',
+    'Accept-Language': 'en-US,en;q=0.9'
   };
   const data = {
     recipient: {
@@ -185,6 +188,9 @@ const getUserProfile = async (userId) => {
         params: {
           fields: 'name,profile_pic',
           access_token: process.env.INSTAGRAM_ACCESS_TOKEN
+        },
+        headers: {
+          'Accept-Language': 'en-US,en;q=0.9'
         }
       }
     );
@@ -228,6 +234,9 @@ const getConversationHistory = async (userId) => {
         params: {
           user_id: userId,
           access_token: process.env.INSTAGRAM_ACCESS_TOKEN
+        },
+        headers: {
+          'Accept-Language': 'en-US,en;q=0.9'
         }
       }
     );

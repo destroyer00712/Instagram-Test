@@ -136,6 +136,18 @@ const handleMessage = (messageEvent) => {
   console.log(`  - Timestamp: ${timestamp}`);
   console.log(`  - Date: ${new Date(timestamp).toISOString()}`);
   
+  // Skip echo messages (messages sent by the bot itself)
+  if (messageEvent.message && messageEvent.message.is_echo) {
+    console.log('🔄 Skipping echo message (bot\'s own message)');
+    return;
+  }
+  
+  // Skip messages from the bot account itself
+  if (senderId === process.env.INSTAGRAM_ACCOUNT_ID) {
+    console.log('🔄 Skipping message from bot account itself');
+    return;
+  }
+  
   // Check if message contains text
   if (messageEvent.message && messageEvent.message.text) {
     const messageText = messageEvent.message.text;

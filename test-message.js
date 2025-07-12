@@ -49,7 +49,8 @@ async function sendTestMessage() {
   const url = `https://graph.instagram.com/v23.0/${SENDER_ID}/messages`;
   const headers = {
     'Authorization': `Bearer ${accessToken}`,
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json',
+    'Accept-Language': 'en-US,en;q=0.9'
   };
   const data = {
     recipient: {
@@ -118,6 +119,9 @@ async function testAccessToken() {
         params: {
           fields: 'id,name,username',
           access_token: accessToken
+        },
+        headers: {
+          'Accept-Language': 'en-US,en;q=0.9'
         }
       }
     );
