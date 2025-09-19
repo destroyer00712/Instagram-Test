@@ -1,4 +1,5 @@
 const instagramAPI = require('./instagramAPI');
+const factChecker = require('./factChecker');
 
 // In-memory conversation state storage
 // In production, you should use a database like Redis or MongoDB
@@ -19,6 +20,8 @@ const botResponses = {
 🔹 Type "contact" for contact information
 🔹 Type "hours" for business hours
 🔹 Type "services" to see our services
+🔹 **Share an Instagram reel** and I'll fact-check it for you! 🔍
+🔹 Type "history" to see your previous fact-checks 📚
 🔹 Type "help" anytime for this message
   
 Just send me a message and I'll do my best to help! 😊`,
@@ -74,7 +77,55 @@ Want to learn more about any specific service? Just ask! 😊`,
     "You're welcome! 😊 Is there anything else I can help you with?",
     "Happy to help! Let me know if you need anything else! 🌟",
     "Glad I could assist! Feel free to ask if you have more questions! 👍"
-  ]
+  ],
+  
+  factCheckProcessing: "🔍 I'm analyzing this video for fact-checking. This may take a moment...",
+  
+  factCheckComplete: (claim, analysis) => {
+    let message = `📊 **Fact-Check Results**\n\n`;
+    message += `🎯 **Claim**: ${claim}\n\n`;
+    message += `⭐ **Verdict**: ${analysis.verdict} (${analysis.confidence} confidence)\n\n`;
+    message += `📝 **Summary**: ${analysis.summary}\n\n`;
+    
+    if (analysis.sources && analysis.sources.length > 0) {
+      message += `🔗 **Sources**:\n`;
+      analysis.sources.forEach((source, index) => {
+        message += `${index + 1}. ${source.publisher} - ${source.rating}\n`;
+        if (source.url) {
+          message += `   ${source.url}\n`;
+        }
+      });
+    }
+    
+    message += `\n💬 You can ask me about this fact-check anytime!`;
+    return message;
+  },
+  
+  factCheckError: "❌ Sorry, I encountered an error while fact-checking this video. Please try again later.",
+  
+  noClaimFound: "🤔 I couldn't find any specific claims to fact-check in this video. Try sharing a video with more specific factual statements.",
+  
+  factCheckHistory: (history) => {
+    if (!history || history.length === 0) {
+      return "📚 You don't have any fact-check history yet. Share a video with claims and I'll help you verify them!";
+    }
+    
+    let message = `📚 **Your Fact-Check History**\n\n`;
+    const recentChecks = history.slice(-5); // Show last 5
+    
+    recentChecks.forEach((check, index) => {
+      const date = new Date(check.timestamp).toLocaleDateString();
+      message += `${index + 1}. **${check.result.claim}**\n`;
+      message += `   Verdict: ${check.result.analysis.verdict}\n`;
+      message += `   Date: ${date}\n\n`;
+    });
+    
+    if (history.length > 5) {
+      message += `...and ${history.length - 5} more fact-checks.`;
+    }
+    
+    return message;
+  }
 };
 
 /**
@@ -137,14 +188,44 @@ const processAttachment = async (senderId, attachments, timestamp) => {
   try {
     await instagramAPI.sendTypingIndicator(senderId);
     
-    const responses = [
-      "Thanks for sharing that! 📸",
-      "I can see you've sent me something, but I can only respond to text messages right now. 🤖",
-      "Nice! If you have any questions, just send me a text message and I'll be happy to help! 😊"
-    ];
+    // Check if attachment is an Instagram reel
+    const igReel = attachments.find(att => att.type === 'ig_reel');
     
-    const response = responses[Math.floor(Math.random() * responses.length)];
-    await instagramAPI.sendMessage(senderId, response);
+    if (igReel) {
+      console.log(`🎬 Instagram reel detected from ${senderId}`);
+      
+      // Send processing message
+      await instagramAPI.sendMessage(senderId, botResponses.factCheckProcessing);
+      
+      try {
+        // Process the reel for fact-checking
+        const result = await factChecker.processInstagramReel(senderId, igReel);
+        
+        if (result.success) {
+          // Send fact-check results
+          const responseMessage = botResponses.factCheckComplete(result.claim, result.analysis);
+          await instagramAPI.sendMessage(senderId, responseMessage);
+        } else {
+          // No claims found
+          await instagramAPI.sendMessage(senderId, botResponses.noClaimFound);
+        }
+        
+      } catch (factCheckError) {
+        console.error(`❌ Fact-check error for ${senderId}:`, factCheckError);
+        await instagramAPI.sendMessage(senderId, botResponses.factCheckError);
+      }
+      
+    } else {
+      // Handle other attachment types
+      const responses = [
+        "Thanks for sharing that! 📸",
+        "I can see you've sent me something. For fact-checking, please share Instagram reels with claims you'd like me to verify! 🔍",
+        "Nice! If you want me to fact-check content, share an Instagram reel and I'll analyze it for you! 🤖"
+      ];
+      
+      const response = responses[Math.floor(Math.random() * responses.length)];
+      await instagramAPI.sendMessage(senderId, response);
+    }
     
   } catch (error) {
     console.error(`❌ Error processing attachment from ${senderId}:`, error);
@@ -246,6 +327,14 @@ const generateResponse = async (messageText, userState) => {
     return {
       type: 'text',
       text: botResponses.services
+    };
+  }
+  
+  if (text.includes('fact-check') || text.includes('factcheck') || text.includes('history') || text.includes('previous')) {
+    const history = factChecker.getUserFactCheckHistory(senderId);
+    return {
+      type: 'text',
+      text: botResponses.factCheckHistory(history)
     };
   }
   
