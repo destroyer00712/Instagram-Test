@@ -82,22 +82,39 @@ Want to learn more about any specific service? Just ask! 😊`,
   factCheckProcessing: "🔍 I'm analyzing this video for fact-checking. This may take a moment...",
   
   factCheckComplete: (claim, analysis) => {
-    let message = `📊 **Fact-Check Results**\n\n`;
-    message += `🎯 **Claim**: ${claim}\n\n`;
-    message += `⭐ **Verdict**: ${analysis.verdict} (${analysis.confidence} confidence)\n\n`;
-    message += `📝 **Summary**: ${analysis.summary}\n\n`;
+    let message = `🎯 **Claim**: ${claim}\n\n`;
     
+    // Use the new latest-focused summary
+    message += analysis.summary;
+    
+    // Add latest article analysis if available
+    if (analysis.latestArticleAnalysis && analysis.latestArticleAnalysis.aiAnalysis) {
+      const aiAnalysis = analysis.latestArticleAnalysis.aiAnalysis;
+      message += `\n\n🤖 **AI Reasoning**: ${aiAnalysis.reasoning}`;
+      
+      if (aiAnalysis.credibility_assessment) {
+        message += `\n\n📊 **Source Assessment**: ${aiAnalysis.credibility_assessment}`;
+      }
+    }
+    
+    // Show sources with latest first
     if (analysis.sources && analysis.sources.length > 0) {
-      message += `🔗 **Sources**:\n`;
+      message += `\n\n🔗 **Sources** (Latest First):\n`;
       analysis.sources.forEach((source, index) => {
-        message += `${index + 1}. ${source.publisher} - ${source.rating}\n`;
+        const isLatest = index === 0 ? '🆕 ' : '';
+        message += `${index + 1}. ${isLatest}${source.publisher} (${source.reviewDate}) - ${source.rating}\n`;
         if (source.url) {
           message += `   ${source.url}\n`;
         }
       });
     }
     
-    message += `\n💬 You can ask me about this fact-check anytime!`;
+    // Add analysis details
+    if (analysis.analysisDetails && analysis.analysisDetails.aiInferenceUsed) {
+      message += `\n🎯 **Analysis Method**: Latest article content analyzed by AI + ${analysis.analysisDetails.totalSources} total sources reviewed`;
+    }
+    
+    message += `\n\n💬 Ask me "history" to see your fact-check history or share another reel!`;
     return message;
   },
   

@@ -77,22 +77,46 @@ async function testFactCheckAPI() {
 }
 
 async function testClaimExtraction() {
-  console.log('🧠 Testing Claim Extraction...\n');
+  console.log('🧠 Testing Enhanced Claim Extraction (using Gemini 1.5 Pro)...\n');
   
   try {
-    const sampleTranscription = "Charlie Kirk, the conservative activist, was tragically shot and killed yesterday during a public event.";
-    const sampleCaption = "Breaking news about Charlie Kirk #news #politics";
+    // Test multiple scenarios for better validation
+    const testCases = [
+      {
+        transcription: "Charlie Kirk, the conservative activist, was tragically shot and killed yesterday during a public event.",
+        caption: "Breaking news about Charlie Kirk #news #politics",
+        expected: "Should extract a factual claim about Charlie Kirk"
+      },
+      {
+        transcription: "I think this policy is really bad and the government should change it because it's not working well.",
+        caption: "My opinion on current policy #opinion #politics",
+        expected: "Should return 'No verifiable claim found' for opinion"
+      },
+      {
+        transcription: "According to recent studies, 75% of Americans support the new healthcare policy.",
+        caption: "Healthcare statistics #data #healthcare",
+        expected: "Should extract statistical claim"
+      }
+    ];
     
-    console.log('Sample transcription:', sampleTranscription);
-    console.log('Sample caption:', sampleCaption);
+    for (let i = 0; i < testCases.length; i++) {
+      const testCase = testCases[i];
+      console.log(`\n📋 Test Case ${i + 1}: ${testCase.expected}`);
+      console.log(`Transcription: "${testCase.transcription}"`);
+      console.log(`Caption: "${testCase.caption}"`);
+      
+      const claim = await factChecker.extractClaim(testCase.transcription, testCase.caption);
+      console.log(`✅ Result: "${claim}"`);
+      
+      // Add small delay between tests
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
     
-    const claim = await factChecker.extractClaim(sampleTranscription, sampleCaption);
-    console.log('✅ Extracted claim:', claim);
-    console.log('✅ Claim extraction test completed\n');
+    console.log('\n✅ Enhanced claim extraction test completed\n');
     
   } catch (error) {
     console.log('❌ Claim extraction test failed:', error.message);
-    console.log('   Check your GEMINI_API_KEY\n');
+    console.log('   Check your GEMINI_API_KEY and ensure you have access to Gemini 1.5 Pro\n');
   }
 }
 
