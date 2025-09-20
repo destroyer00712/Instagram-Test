@@ -4,12 +4,15 @@ An intelligent Instagram chatbot built with Node.js and Express that uses the In
 
 ## Features ✨
 
-### 🆕 NEW: AI Fact-Checking Features
+### 🆕 NEW: Enhanced AI Fact-Checking Features
 - 🎥 **Instagram Reel Processing** - Automatically downloads and processes shared reels
 - 🎤 **AI Transcription** - Uses Google Gemini AI to transcribe video audio
+- 🖼️ **Video Frame Analysis** - Analyzes visual content to generate comprehensive descriptions
 - 🧠 **Claim Extraction** - Intelligently identifies factual claims from content
 - 🔍 **Fact Verification** - Queries Google's Fact Check Tools API
-- 📊 **Detailed Results** - Provides verdicts with confidence levels and sources
+- 🧮 **Logical Consistency Checking** - Detects contradictions and weights them in final decisions
+- 🔄 **Reddit Integration** - Searches Reddit for community verification when Google fails
+- 📊 **Enhanced Weighted Scoring** - Incorporates logical inconsistencies and community sentiment
 - 💾 **Memory Storage** - Remembers fact-check history for each user
 
 ### 🤖 Core Chatbot Features
@@ -82,6 +85,7 @@ Before getting started, you'll need:
    # 🆕 File Storage
    TEMP_VIDEO_DIR=./temp/videos/
    TEMP_AUDIO_DIR=./temp/audio/
+   TEMP_FRAMES_DIR=./temp/frames/
    ```
 
 5. **Start the server:**

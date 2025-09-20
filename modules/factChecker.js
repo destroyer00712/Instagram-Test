@@ -13,6 +13,8 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const MODELS = {
   TRANSCRIPTION: 'gemini-1.5-pro', // Best for audio transcription
   CLAIM_ANALYSIS: 'gemini-1.5-pro', // Best for complex reasoning
+  VIDEO_ANALYSIS: 'gemini-1.5-pro', // Best for video frame analysis
+  LOGICAL_CONSISTENCY: 'gemini-1.5-pro', // For logical consistency checking
   FALLBACK: 'gemini-1.5-flash' // Faster fallback if Pro fails
 };
 
@@ -38,6 +40,22 @@ const factCheckMemory = new Map();
 
 // Cache for scraped article content to avoid re-scraping
 const articleContentCache = new Map();
+
+// Cache for Reddit search results
+const redditSearchCache = new Map();
+
+// Logical consistency patterns for weighting
+const LOGICAL_INCONSISTENCY_PATTERNS = [
+  'contradicts',
+  'inconsistent with',
+  'conflicts with',
+  'opposite to',
+  'disputed by',
+  'refuted by',
+  'debunked by',
+  'proven false',
+  'factually incorrect'
+];
 
 /**
  * Download video from Instagram URL
@@ -78,6 +96,45 @@ const downloadVideo = async (videoUrl, fileName) => {
 };
 
 /**
+ * Extract video frames for analysis
+ */
+const extractVideoFrames = async (videoPath, frameCount = 5) => {
+  console.log(`🖼️ Extracting ${frameCount} frames from: ${videoPath}`);
+  
+  const framesDir = process.env.TEMP_FRAMES_DIR || './temp/frames/';
+  await fs.ensureDir(framesDir);
+  
+  const framePattern = path.join(framesDir, `${uuidv4()}_frame_%03d.jpg`);
+  
+  return new Promise((resolve, reject) => {
+    ffmpeg(videoPath)
+      .screenshots({
+        count: frameCount,
+        folder: framesDir,
+        filename: `${uuidv4()}_frame_%03d.jpg`,
+        size: '1280x720' // Standard HD resolution for analysis
+      })
+      .on('end', () => {
+        // Get the generated frame files
+        const frameFiles = [];
+        for (let i = 1; i <= frameCount; i++) {
+          const paddedNum = i.toString().padStart(3, '0');
+          const framePath = framePattern.replace('%03d', paddedNum);
+          if (fs.existsSync(framePath)) {
+            frameFiles.push(framePath);
+          }
+        }
+        console.log(`✅ Extracted ${frameFiles.length} frames`);
+        resolve(frameFiles);
+      })
+      .on('error', (error) => {
+        console.error('❌ Error extracting frames:', error);
+        reject(error);
+      });
+  });
+};
+
+/**
  * Extract audio from video file
  */
 const extractAudio = async (videoPath) => {
@@ -101,6 +158,96 @@ const extractAudio = async (videoPath) => {
       })
       .save(audioPath);
   });
+};
+
+/**
+ * Analyze video frames to generate comprehensive visual description
+ */
+const analyzeVideoFrames = async (framePaths, transcription = '') => {
+  console.log(`🎬 Analyzing ${framePaths.length} video frames for visual context...`);
+  
+  try {
+    const model = genAI.getGenerativeModel({ 
+      model: MODELS.VIDEO_ANALYSIS,
+      generationConfig: GENERATION_CONFIGS.HIGH_ACCURACY
+    });
+    
+    // Prepare frame data for analysis
+    const frameData = [];
+    for (const framePath of framePaths) {
+      try {
+        const frameBuffer = await fs.readFile(framePath);
+        frameData.push({
+          inlineData: {
+            data: frameBuffer.toString('base64'),
+            mimeType: 'image/jpeg'
+          }
+        });
+      } catch (error) {
+        console.warn(`⚠️ Could not read frame ${framePath}:`, error.message);
+      }
+    }
+    
+    if (frameData.length === 0) {
+      console.log('❌ No valid frames to analyze');
+      return null;
+    }
+    
+    const prompt = `You are an expert video analyst specializing in creating comprehensive audio descriptions for accessibility and fact-checking purposes. Analyze these video frames and provide a detailed visual description.
+
+TRANSCRIBED AUDIO: "${transcription}"
+
+ANALYSIS REQUIREMENTS:
+1. **Visual Scene Description**: Describe what you see in each frame - people, objects, settings, text overlays, graphics
+2. **Context Analysis**: How do the visuals relate to the audio content?
+3. **Credibility Indicators**: Look for signs of authenticity or manipulation (editing artifacts, inconsistencies, watermarks, source indicators)
+4. **Text and Graphics**: Transcribe any visible text, captions, headlines, or graphics
+5. **People and Actions**: Describe people's appearance, actions, expressions, and any identifying features
+6. **Setting and Environment**: Describe the location, time indicators, background elements
+7. **Production Quality**: Assess video quality, lighting, camera work that might indicate source credibility
+
+LOGICAL CONSISTENCY CHECK:
+- Do the visuals support or contradict the audio claims?
+- Are there any logical inconsistencies between what's said and what's shown?
+- Note any red flags or suspicious elements
+
+OUTPUT FORMAT:
+{
+  "visual_description": "Comprehensive description of what is shown in the video",
+  "audio_visual_alignment": "How well the visuals align with the audio content",
+  "credibility_indicators": ["list", "of", "credibility", "signals"],
+  "text_elements": ["visible", "text", "and", "graphics"],
+  "logical_consistency": "Assessment of logical consistency between audio and video",
+  "red_flags": ["any", "suspicious", "elements"],
+  "production_assessment": "Quality and authenticity assessment"
+}
+
+Provide ONLY the JSON response:`;
+    
+    const result = await model.generateContent([prompt, ...frameData]);
+    const analysisText = result.response.text().trim();
+    
+    try {
+      const analysis = JSON.parse(analysisText);
+      console.log(`✅ Video analysis completed with ${frameData.length} frames`);
+      return analysis;
+    } catch (jsonError) {
+      console.log(`⚠️ JSON parse failed for video analysis, using fallback`);
+      return {
+        visual_description: analysisText,
+        audio_visual_alignment: "Unable to parse detailed alignment",
+        credibility_indicators: [],
+        text_elements: [],
+        logical_consistency: "Analysis parsing failed",
+        red_flags: [],
+        production_assessment: "Unable to assess"
+      };
+    }
+    
+  } catch (error) {
+    console.error('❌ Error analyzing video frames:', error);
+    return null;
+  }
 };
 
 /**
@@ -170,6 +317,98 @@ Audio file to transcribe:`;
   } catch (error) {
     console.error('❌ Error transcribing audio:', error);
     throw error;
+  }
+};
+
+/**
+ * Check logical consistency of claims and evidence
+ */
+const checkLogicalConsistency = async (claim, videoAnalysis, factCheckResults) => {
+  console.log(`🧠 Checking logical consistency for claim: ${claim.substring(0, 100)}...`);
+  
+  try {
+    const model = genAI.getGenerativeModel({ 
+      model: MODELS.LOGICAL_CONSISTENCY,
+      generationConfig: GENERATION_CONFIGS.HIGH_ACCURACY
+    });
+    
+    // Prepare evidence from fact-check results
+    let evidenceText = '';
+    if (factCheckResults?.claims?.length > 0) {
+      evidenceText = factCheckResults.claims.slice(0, 3).map(claim => {
+        const review = claim.claimReview?.[0];
+        return review ? `${review.publisher?.name}: ${review.textualRating}` : '';
+      }).filter(Boolean).join('; ');
+    }
+    
+    const visualConsistency = videoAnalysis ? videoAnalysis.logical_consistency : 'No video analysis available';
+    const redFlags = videoAnalysis ? videoAnalysis.red_flags.join(', ') : 'None identified';
+    
+    const prompt = `You are an expert logical reasoning analyst specializing in detecting inconsistencies and contradictions in claims and evidence. Analyze the following information for logical consistency.
+
+CLAIM TO ANALYZE: "${claim}"
+
+VISUAL ANALYSIS: "${visualConsistency}"
+RED FLAGS DETECTED: "${redFlags}"
+FACT-CHECK EVIDENCE: "${evidenceText}"
+
+LOGICAL CONSISTENCY ANALYSIS:
+1. **Internal Consistency**: Are there contradictions within the claim itself?
+2. **Evidence Alignment**: Do the visual elements support or contradict the claim?
+3. **Source Credibility**: Are there signs of manipulation or unreliable sourcing?
+4. **Logical Fallacies**: Identify any logical fallacies in the claim's structure
+5. **Contradiction Detection**: Find specific contradictions between claim and evidence
+
+SCORING CRITERIA:
+- HIGH_CONSISTENCY (0.8-1.0): All elements align logically, no contradictions
+- MEDIUM_CONSISTENCY (0.5-0.7): Minor inconsistencies or missing context
+- LOW_CONSISTENCY (0.2-0.4): Significant contradictions or logical flaws
+- VERY_LOW_CONSISTENCY (0.0-0.1): Major contradictions, likely false
+
+OUTPUT FORMAT:
+{
+  "consistency_score": 0.0-1.0,
+  "consistency_level": "HIGH|MEDIUM|LOW|VERY_LOW",
+  "contradictions_found": ["list", "of", "specific", "contradictions"],
+  "logical_fallacies": ["identified", "fallacies"],
+  "evidence_alignment": "How well evidence supports the claim",
+  "credibility_assessment": "Overall credibility based on logical analysis",
+  "weight_adjustment": -0.3 to 0.3 (adjustment to apply to final verdict)
+}
+
+Provide ONLY the JSON response:`;
+    
+    const result = await model.generateContent(prompt);
+    const analysisText = result.response.text().trim();
+    
+    try {
+      const analysis = JSON.parse(analysisText);
+      console.log(`✅ Logical consistency analysis: ${analysis.consistency_level} (${analysis.consistency_score})`);
+      return analysis;
+    } catch (jsonError) {
+      console.log(`⚠️ JSON parse failed for logical consistency, using fallback`);
+      return {
+        consistency_score: 0.5,
+        consistency_level: "MEDIUM",
+        contradictions_found: [],
+        logical_fallacies: [],
+        evidence_alignment: "Unable to parse analysis",
+        credibility_assessment: "Analysis parsing failed",
+        weight_adjustment: 0.0
+      };
+    }
+    
+  } catch (error) {
+    console.error('❌ Error in logical consistency check:', error);
+    return {
+      consistency_score: 0.5,
+      consistency_level: "MEDIUM",
+      contradictions_found: [],
+      logical_fallacies: [],
+      evidence_alignment: "Analysis failed",
+      credibility_assessment: "Unable to assess",
+      weight_adjustment: 0.0
+    };
   }
 };
 
@@ -280,9 +519,283 @@ Now extract the PRIMARY verifiable claim:`;
 };
 
 /**
- * Search for fact-checks using Google Fact Check Tools API with enhanced search strategy
+ * Search Reddit for news verification and public sentiment
  */
-const searchFactChecks = async (claim) => {
+const searchRedditForVerification = async (claim) => {
+  console.log(`🔍 Searching Reddit for verification of: ${claim.substring(0, 50)}...`);
+  
+  // Check cache first
+  const cacheKey = `reddit_${claim.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+  if (redditSearchCache.has(cacheKey)) {
+    console.log('📋 Using cached Reddit results');
+    return redditSearchCache.get(cacheKey);
+  }
+  
+  try {
+    // Extract key terms from claim for better search
+    const searchTerms = claim
+      .replace(/[^\w\s]/g, ' ')
+      .split(' ')
+      .filter(word => word.length > 3 && !['this', 'that', 'with', 'from', 'they', 'were', 'been', 'have'].includes(word.toLowerCase()))
+      .slice(0, 5)
+      .join(' ');
+    
+    console.log(`🔎 Reddit search terms: "${searchTerms}"`);
+    
+    // Search multiple relevant subreddits
+    const subreddits = [
+      'news',
+      'worldnews', 
+      'politics',
+      'factcheck',
+      'skeptic',
+      'OutOfTheLoop',
+      'explainlikeimfive',
+      'todayilearned'
+    ];
+    
+    const allResults = [];
+    
+    for (const subreddit of subreddits.slice(0, 4)) { // Limit to 4 subreddits to avoid rate limits
+      try {
+        const searchUrl = `https://www.reddit.com/r/${subreddit}/search.json`;
+        const params = {
+          q: searchTerms,
+          sort: 'relevance',
+          limit: 10,
+          t: 'month' // Last month for recent discussions
+        };
+        
+        const response = await axios.get(searchUrl, {
+          params,
+          headers: {
+            'User-Agent': 'FactChecker/1.0 (Educational Research)'
+          },
+          timeout: 10000
+        });
+        
+        if (response.data?.data?.children) {
+          const posts = response.data.data.children
+            .map(child => child.data)
+            .filter(post => post.title && post.selftext !== '[removed]')
+            .slice(0, 5); // Top 5 posts per subreddit
+          
+          posts.forEach(post => {
+            allResults.push({
+              subreddit: post.subreddit,
+              title: post.title,
+              selftext: post.selftext || '',
+              score: post.score,
+              num_comments: post.num_comments,
+              created_utc: post.created_utc,
+              url: `https://reddit.com${post.permalink}`,
+              upvote_ratio: post.upvote_ratio
+            });
+          });
+          
+          console.log(`  ✅ Found ${posts.length} posts in r/${subreddit}`);
+        }
+        
+        // Rate limiting
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+      } catch (error) {
+        console.log(`  ⚠️ Error searching r/${subreddit}:`, error.message);
+      }
+    }
+    
+    // Sort by relevance score (combination of upvotes and comments)
+    allResults.sort((a, b) => {
+      const scoreA = (a.score * 0.7) + (a.num_comments * 0.3);
+      const scoreB = (b.score * 0.7) + (b.num_comments * 0.3);
+      return scoreB - scoreA;
+    });
+    
+    const result = {
+      total_posts: allResults.length,
+      posts: allResults.slice(0, 10), // Top 10 most relevant
+      search_terms: searchTerms,
+      searched_subreddits: subreddits.slice(0, 4)
+    };
+    
+    // Cache results for 1 hour
+    redditSearchCache.set(cacheKey, result);
+    setTimeout(() => redditSearchCache.delete(cacheKey), 3600000);
+    
+    console.log(`✅ Reddit search completed: ${result.total_posts} posts found`);
+    return result;
+    
+  } catch (error) {
+    console.error('❌ Error searching Reddit:', error);
+    return {
+      total_posts: 0,
+      posts: [],
+      search_terms: '',
+      searched_subreddits: [],
+      error: error.message
+    };
+  }
+};
+
+/**
+ * Analyze Reddit sentiment and verification
+ */
+const analyzeRedditSentiment = async (redditResults, originalClaim) => {
+  if (!redditResults.posts || redditResults.posts.length === 0) {
+    return {
+      sentiment: 'NEUTRAL',
+      confidence: 0.0,
+      verification_signals: [],
+      community_consensus: 'No data available'
+    };
+  }
+  
+  console.log(`📊 Analyzing Reddit sentiment from ${redditResults.posts.length} posts...`);
+  
+  try {
+    const model = genAI.getGenerativeModel({ 
+      model: MODELS.CLAIM_ANALYSIS,
+      generationConfig: GENERATION_CONFIGS.BALANCED
+    });
+    
+    // Prepare Reddit content for analysis
+    const redditContent = redditResults.posts.slice(0, 5).map(post => 
+      `Title: ${post.title}\nSubreddit: r/${post.subreddit}\nScore: ${post.score}\nComments: ${post.num_comments}\nContent: ${post.selftext.substring(0, 300)}`
+    ).join('\n\n---\n\n');
+    
+    const prompt = `You are analyzing Reddit discussions to assess public sentiment and verification signals about a specific claim. Analyze the community response and fact-checking signals.
+
+ORIGINAL CLAIM: "${originalClaim}"
+
+REDDIT DISCUSSIONS:
+${redditContent}
+
+ANALYSIS REQUIREMENTS:
+1. **Sentiment Analysis**: What is the overall community sentiment toward this claim?
+2. **Verification Signals**: Are there signs that the community has fact-checked or verified this claim?
+3. **Credibility Indicators**: Look for references to credible sources, fact-checkers, or expert opinions
+4. **Misinformation Patterns**: Identify if the community is actively debunking or supporting the claim
+5. **Community Consensus**: What appears to be the general consensus?
+
+SENTIMENT CATEGORIES:
+- STRONGLY_SUPPORTS: Community strongly believes the claim is true
+- SUPPORTS: Community generally believes the claim
+- NEUTRAL: Mixed or unclear sentiment
+- SKEPTICAL: Community questions or doubts the claim  
+- DEBUNKS: Community actively contradicts or debunks the claim
+
+OUTPUT FORMAT:
+{
+  "sentiment": "STRONGLY_SUPPORTS|SUPPORTS|NEUTRAL|SKEPTICAL|DEBUNKS",
+  "confidence": 0.0-1.0,
+  "verification_signals": ["signals", "found", "in", "discussions"],
+  "community_consensus": "Summary of what the community generally believes",
+  "credible_sources_mentioned": ["any", "credible", "sources", "referenced"],
+  "misinformation_flags": ["signs", "of", "misinformation", "discussion"]
+}
+
+Provide ONLY the JSON response:`;
+    
+    const result = await model.generateContent(prompt);
+    const analysisText = result.response.text().trim();
+    
+    try {
+      const analysis = JSON.parse(analysisText);
+      console.log(`✅ Reddit sentiment analysis: ${analysis.sentiment} (${analysis.confidence})`);
+      return analysis;
+    } catch (jsonError) {
+      console.log(`⚠️ JSON parse failed for Reddit sentiment, using fallback`);
+      return {
+        sentiment: 'NEUTRAL',
+        confidence: 0.3,
+        verification_signals: [],
+        community_consensus: 'Unable to parse analysis',
+        credible_sources_mentioned: [],
+        misinformation_flags: []
+      };
+    }
+    
+  } catch (error) {
+    console.error('❌ Error analyzing Reddit sentiment:', error);
+    return {
+      sentiment: 'NEUTRAL',
+      confidence: 0.0,
+      verification_signals: [],
+      community_consensus: 'Analysis failed',
+      credible_sources_mentioned: [],
+      misinformation_flags: []
+    };
+  }
+};
+
+/**
+ * Detect video age from metadata or URL patterns to optimize search strategy
+ */
+const detectVideoAge = (videoUrl, caption = '') => {
+  console.log(`📅 Attempting to detect video age from metadata...`);
+  
+  try {
+    // Look for date patterns in caption or URL
+    const datePatterns = [
+      /(\d{4})-(\d{1,2})-(\d{1,2})/g, // YYYY-MM-DD
+      /(\d{1,2})\/(\d{1,2})\/(\d{4})/g, // MM/DD/YYYY
+      /(\d{1,2})-(\d{1,2})-(\d{4})/g, // MM-DD-YYYY
+      /(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s+(\d{4})/gi, // Month DD, YYYY
+    ];
+    
+    const textToSearch = `${caption} ${videoUrl}`;
+    let detectedDate = null;
+    
+    for (const pattern of datePatterns) {
+      const matches = textToSearch.match(pattern);
+      if (matches && matches.length > 0) {
+        try {
+          // Try to parse the first match as a date
+          const dateStr = matches[0];
+          const parsedDate = new Date(dateStr);
+          
+          // Validate the date is reasonable (not in future, not too old)
+          const now = new Date();
+          const tenYearsAgo = new Date(now.getFullYear() - 10, now.getMonth(), now.getDate());
+          
+          // Check if it's a valid date and within reasonable bounds
+          if (!isNaN(parsedDate.getTime()) && parsedDate <= now && parsedDate >= tenYearsAgo) {
+            detectedDate = parsedDate;
+            console.log(`✅ Detected video date: ${parsedDate.toDateString()}`);
+            break;
+          }
+        } catch (error) {
+          // Continue to next pattern if parsing fails
+          continue;
+        }
+      }
+    }
+    
+    if (detectedDate) {
+      const daysDiff = Math.floor((new Date() - detectedDate) / (1000 * 60 * 60 * 24));
+      console.log(`📊 Video is approximately ${daysDiff} days old`);
+      
+      // Return suggested starting search strategy based on age
+      if (daysDiff <= 30) return { startStrategy: 0, estimatedAge: daysDiff };
+      if (daysDiff <= 90) return { startStrategy: 1, estimatedAge: daysDiff };
+      if (daysDiff <= 365) return { startStrategy: 2, estimatedAge: daysDiff };
+      if (daysDiff <= 1825) return { startStrategy: 3, estimatedAge: daysDiff };
+      return { startStrategy: 4, estimatedAge: daysDiff }; // All time
+    }
+    
+    console.log(`⚠️ Could not detect video age, will use progressive search`);
+    return { startStrategy: 0, estimatedAge: null };
+    
+  } catch (error) {
+    console.error(`❌ Error detecting video age:`, error.message);
+    return { startStrategy: 0, estimatedAge: null };
+  }
+};
+
+/**
+ * Search for fact-checks using Google Fact Check Tools API with progressive timeline strategy
+ */
+const searchFactChecks = async (claim, videoUrl = '', caption = '') => {
   console.log(`🔍 Searching fact-checks for: ${claim}`);
   
   const baseUrl = 'https://factchecktools.googleapis.com/v1alpha1/claims:search';
@@ -297,34 +810,71 @@ const searchFactChecks = async (claim) => {
   // Remove duplicates
   const uniqueQueries = [...new Set(searchQueries)];
   
-  let allResults = [];
+  // Progressive timeline search strategy - start with recent, expand if needed
+  const timelineStrategies = [
+    { maxAgeDays: 30, description: "last 30 days" },
+    { maxAgeDays: 90, description: "last 90 days" },
+    { maxAgeDays: 365, description: "last year" },
+    { maxAgeDays: 1825, description: "last 5 years" }, // 5 years
+    { description: "all time" } // No maxAgeDays = search all time
+  ];
   
-  for (const query of uniqueQueries) {
-    try {
-      const params = {
-        query: query.trim(),
-        languageCode: 'en',
-        maxAgeDays: 30, // Extended to 30 days for better coverage
-        pageSize: 10,
-        offset: 0,
-        key: process.env.GOOGLE_FACTCHECK_API_KEY
-      };
-      
-      console.log(`🔎 Searching with query: "${query}"`);
-      const response = await axios.get(baseUrl, { params });
-      
-      if (response.data.claims && response.data.claims.length > 0) {
-        allResults = allResults.concat(response.data.claims);
-        console.log(`  ✅ Found ${response.data.claims.length} results`);
+  // Detect video age to optimize search strategy
+  const ageDetection = detectVideoAge(videoUrl, caption);
+  let allResults = [];
+  let searchStrategy = ageDetection.startStrategy;
+  
+  console.log(`🎯 Starting search from strategy ${searchStrategy} based on ${ageDetection.estimatedAge ? `estimated age: ${ageDetection.estimatedAge} days` : 'progressive approach'}`);
+  
+  // Try each timeline strategy until we find results or exhaust all options
+  while (searchStrategy < timelineStrategies.length && allResults.length === 0) {
+    const strategy = timelineStrategies[searchStrategy];
+    console.log(`📅 Searching ${strategy.description}...`);
+    
+    for (const query of uniqueQueries) {
+      try {
+        const params = {
+          query: query.trim(),
+          languageCode: 'en',
+          pageSize: 10,
+          offset: 0,
+          key: process.env.GOOGLE_FACTCHECK_API_KEY
+        };
+        
+        // Only add maxAgeDays if specified (omit for "all time" search)
+        if (strategy.maxAgeDays) {
+          params.maxAgeDays = strategy.maxAgeDays;
+        }
+        
+        console.log(`🔎 Searching with query: "${query}" (${strategy.description})`);
+        const response = await axios.get(baseUrl, { params });
+        
+        if (response.data.claims && response.data.claims.length > 0) {
+          allResults = allResults.concat(response.data.claims);
+          console.log(`  ✅ Found ${response.data.claims.length} results`);
+        }
+        
+        // Add delay to respect rate limits
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+      } catch (error) {
+        console.log(`  ⚠️ Query "${query}" (${strategy.description}) failed:`, error.message);
+        continue; // Try next query
       }
-      
-      // Add delay to respect rate limits
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-    } catch (error) {
-      console.log(`  ⚠️ Query "${query}" failed:`, error.message);
-      continue; // Try next query
     }
+    
+    // If we found results, break out of the timeline loop
+    if (allResults.length > 0) {
+      console.log(`✅ Found results using ${strategy.description} search strategy`);
+      break;
+    }
+    
+    searchStrategy++;
+  }
+  
+  // If still no results after all timeline strategies, log the issue
+  if (allResults.length === 0) {
+    console.log(`⚠️ No results found across all timeline strategies (30 days → all time)`);
   }
   
   // Remove duplicate results based on claim text
@@ -341,7 +891,12 @@ const searchFactChecks = async (claim) => {
     return new Date(bDate) - new Date(aDate);
   });
   
-  return { claims: uniqueResults };
+  return { 
+    claims: uniqueResults,
+    searchStrategy: searchStrategy < timelineStrategies.length ? timelineStrategies[searchStrategy] : { description: "all strategies exhausted" },
+    totalStrategiesTried: searchStrategy + 1,
+    estimatedVideoAge: ageDetection.estimatedAge
+  };
 };
 
 /**
@@ -646,18 +1201,62 @@ const extractFromText = (text, possibleValues) => {
 };
 
 /**
- * Analyze fact-check results with LATEST article prioritization and full content analysis
+ * Enhanced fact-check analysis with logical consistency, Reddit integration, and weighted scoring
  */
-const analyzeFactChecks = async (factCheckResults, originalClaim) => {
+const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis = null, logicalConsistency = null) => {
   console.log(`📊 Analyzing fact-check results with latest article prioritization...`);
   
+  // If no Google fact-check results, try Reddit as fallback
+  let redditAnalysis = null;
   if (!factCheckResults.claims || factCheckResults.claims.length === 0) {
+    console.log('🔄 No Google fact-check results found, searching Reddit...');
+    
+    try {
+      const redditResults = await searchRedditForVerification(originalClaim);
+      if (redditResults.total_posts > 0) {
+        redditAnalysis = await analyzeRedditSentiment(redditResults, originalClaim);
+        
+        // Generate verdict based on Reddit analysis
+        let redditVerdict = 'Unknown';
+        let redditConfidence = 'Low';
+        
+        if (redditAnalysis.sentiment === 'DEBUNKS' && redditAnalysis.confidence > 0.6) {
+          redditVerdict = 'False';
+          redditConfidence = 'Medium';
+        } else if (redditAnalysis.sentiment === 'STRONGLY_SUPPORTS' && redditAnalysis.confidence > 0.6) {
+          redditVerdict = 'True';
+          redditConfidence = 'Medium';
+        } else if (redditAnalysis.sentiment === 'SKEPTICAL') {
+          redditVerdict = 'Questionable';
+          redditConfidence = 'Low';
+        }
+        
+        return {
+          verdict: redditVerdict,
+          confidence: redditConfidence,
+          summary: generateRedditBasedSummary(redditVerdict, redditAnalysis, redditResults.total_posts),
+          sources: [],
+          latestArticleAnalysis: null,
+          redditAnalysis: redditAnalysis,
+          redditResults: redditResults,
+          videoAnalysis: videoAnalysis,
+          logicalConsistency: logicalConsistency,
+          source: 'reddit_fallback'
+        };
+      }
+    } catch (error) {
+      console.error('❌ Reddit fallback failed:', error);
+    }
+    
     return {
       verdict: 'Unknown',
       confidence: 'Low',
-      summary: 'No fact-check information available for this claim.',
+      summary: 'No fact-check information available for this claim from Google or Reddit.',
       sources: [],
-      latestArticleAnalysis: null
+      latestArticleAnalysis: null,
+      redditAnalysis: null,
+      videoAnalysis: videoAnalysis,
+      logicalConsistency: logicalConsistency
     };
   }
   
@@ -798,15 +1397,22 @@ const analyzeFactChecks = async (factCheckResults, originalClaim) => {
       }
     }
     
-    const finalWeight = effectiveWeight * confidence;
-    totalWeight += finalWeight;
+    // Apply logical consistency adjustment
+    let logicalAdjustment = 0;
+    if (logicalConsistency && index === 0) { // Only apply to latest source
+      logicalAdjustment = logicalConsistency.weight_adjustment || 0;
+      console.log(`🧠 Applying logical consistency adjustment: ${logicalAdjustment}`);
+    }
+    
+    const finalWeight = (effectiveWeight * confidence) + logicalAdjustment;
+    totalWeight += Math.max(0, finalWeight); // Ensure weight doesn't go negative
     
     if (normalizedRating === 'false') {
-      falseScore += finalWeight;
+      falseScore += Math.max(0, finalWeight);
     } else if (normalizedRating === 'true') {
-      trueScore += finalWeight;
+      trueScore += Math.max(0, finalWeight);
     } else if (normalizedRating === 'mixed') {
-      mixedScore += finalWeight;
+      mixedScore += Math.max(0, finalWeight);
     }
     
     analysisData.push({
@@ -848,7 +1454,7 @@ const analyzeFactChecks = async (factCheckResults, originalClaim) => {
     }
   }
   
-  const summary = generateLatestFocusedSummary(primaryVerdict, overallConfidence, allSources.length, latestArticleAnalysis, aiInference);
+  const summary = generateLatestFocusedSummary(primaryVerdict, overallConfidence, allSources.length, latestArticleAnalysis, aiInference, factCheckResults);
   
   return {
     verdict: primaryVerdict,
@@ -856,21 +1462,79 @@ const analyzeFactChecks = async (factCheckResults, originalClaim) => {
     summary,
     sources: allSources.slice(0, 4), // Top 4 sources (latest first)
     latestArticleAnalysis,
+    videoAnalysis: videoAnalysis,
+    logicalConsistency: logicalConsistency,
+    redditAnalysis: redditAnalysis,
     analysisDetails: {
       totalSources: allSources.length,
       latestSourcePriority: true,
       falseRatio: totalWeight > 0 ? (falseScore / totalWeight).toFixed(2) : '0',
       trueRatio: totalWeight > 0 ? (trueScore / totalWeight).toFixed(2) : '0',
       mixedRatio: totalWeight > 0 ? (mixedScore / totalWeight).toFixed(2) : '0',
-      aiInferenceUsed: !!aiInference
+      aiInferenceUsed: !!aiInference,
+      logicalConsistencyUsed: !!logicalConsistency,
+      videoAnalysisUsed: !!videoAnalysis,
+      searchStrategy: factCheckResults.searchStrategy?.description || 'unknown',
+      totalStrategiesTried: factCheckResults.totalStrategiesTried || 1,
+      estimatedVideoAge: factCheckResults.estimatedVideoAge
     }
   };
 };
 
 /**
+ * Generate Reddit-based summary when no Google fact-checks are available
+ */
+const generateRedditBasedSummary = (verdict, redditAnalysis, totalPosts) => {
+  let summary = `📊 **REDDIT COMMUNITY ANALYSIS** (${totalPosts} relevant discussions found)\n\n`;
+  
+  summary += `🔍 **Community Sentiment**: ${redditAnalysis.sentiment.replace('_', ' ')}\n`;
+  summary += `📈 **Confidence Level**: ${(redditAnalysis.confidence * 100).toFixed(0)}%\n\n`;
+  
+  if (redditAnalysis.community_consensus && redditAnalysis.community_consensus !== 'No data available') {
+    summary += `💬 **Community Consensus**: ${redditAnalysis.community_consensus}\n\n`;
+  }
+  
+  if (redditAnalysis.verification_signals && redditAnalysis.verification_signals.length > 0) {
+    summary += `✅ **Verification Signals Found**:\n`;
+    redditAnalysis.verification_signals.slice(0, 3).forEach((signal, index) => {
+      summary += `  ${index + 1}. ${signal}\n`;
+    });
+    summary += `\n`;
+  }
+  
+  if (redditAnalysis.credible_sources_mentioned && redditAnalysis.credible_sources_mentioned.length > 0) {
+    summary += `📰 **Credible Sources Mentioned**: ${redditAnalysis.credible_sources_mentioned.join(', ')}\n\n`;
+  }
+  
+  if (redditAnalysis.misinformation_flags && redditAnalysis.misinformation_flags.length > 0) {
+    summary += `⚠️ **Misinformation Flags**: ${redditAnalysis.misinformation_flags.join(', ')}\n\n`;
+  }
+  
+  // Overall verdict
+  summary += `⭐ **REDDIT-BASED VERDICT**: `;
+  switch (verdict) {
+    case 'True':
+      summary += `**COMMUNITY SUPPORTS** - Reddit discussions generally support this claim`;
+      break;
+    case 'False':
+      summary += `**COMMUNITY DEBUNKS** - Reddit discussions actively contradict this claim`;
+      break;
+    case 'Questionable':
+      summary += `**COMMUNITY SKEPTICAL** - Reddit discussions express doubt about this claim`;
+      break;
+    default:
+      summary += `**INCONCLUSIVE** - Reddit discussions show mixed or unclear sentiment`;
+  }
+  
+  summary += `\n\n⚠️ **Note**: This analysis is based on Reddit community discussions and should be considered alongside professional fact-checking sources when available.`;
+  
+  return summary;
+};
+
+/**
  * Generate latest-focused summary based on analysis
  */
-const generateLatestFocusedSummary = (verdict, confidence, sourceCount, latestArticleAnalysis, aiInference) => {
+const generateLatestFocusedSummary = (verdict, confidence, sourceCount, latestArticleAnalysis, aiInference, factCheckResults = null) => {
   let summary = `📊 **LATEST ARTICLE ANALYSIS** (prioritizing most recent reporting)\n\n`;
   
   if (latestArticleAnalysis) {
@@ -914,6 +1578,17 @@ const generateLatestFocusedSummary = (verdict, confidence, sourceCount, latestAr
   }
   
   summary += `\n\n📚 **Total Sources Reviewed**: ${sourceCount} (sorted by recency, latest weighted 3x higher)`;
+  
+  // Add timeline search information if available
+  if (factCheckResults && factCheckResults.searchStrategy) {
+    summary += `\n🔍 **Search Strategy**: Found results using ${factCheckResults.searchStrategy.description} search`;
+    if (factCheckResults.totalStrategiesTried > 1) {
+      summary += ` (tried ${factCheckResults.totalStrategiesTried} timeline strategies)`;
+    }
+    if (factCheckResults.estimatedVideoAge) {
+      summary += `\n📅 **Estimated Content Age**: ~${factCheckResults.estimatedVideoAge} days old`;
+    }
+  }
   
   return summary;
 };
@@ -1046,7 +1721,7 @@ const cleanupFiles = async (...filePaths) => {
 };
 
 /**
- * Main function to process Instagram reel
+ * Enhanced main function to process Instagram reel with comprehensive analysis
  */
 const processInstagramReel = async (senderId, attachment) => {
   console.log(`🎬 Processing Instagram reel for user: ${senderId}`);
@@ -1061,39 +1736,54 @@ const processInstagramReel = async (senderId, attachment) => {
   
   let videoPath = null;
   let audioPath = null;
+  let framePaths = [];
   
   try {
     // Step 1: Download video
     videoPath = await downloadVideo(videoUrl, fileName);
     
-    // Step 2: Extract audio
-    audioPath = await extractAudio(videoPath);
+    // Step 2: Extract audio and video frames in parallel
+    const [audioPath_result, framePaths_result] = await Promise.all([
+      extractAudio(videoPath),
+      extractVideoFrames(videoPath, 5)
+    ]);
+    audioPath = audioPath_result;
+    framePaths = framePaths_result;
     
     // Step 3: Transcribe audio
     const transcription = await transcribeAudio(audioPath);
     
-    // Step 4: Extract claim
+    // Step 4: Analyze video frames for visual context
+    const videoAnalysis = await analyzeVideoFrames(framePaths, transcription);
+    
+    // Step 5: Extract claim with enhanced context
     const claim = await extractClaim(transcription, caption);
     
     if (claim === 'No verifiable claim found') {
       return {
         success: false,
-        message: 'No verifiable claims found in this video to fact-check.'
+        message: 'No verifiable claims found in this video to fact-check.',
+        videoAnalysis: videoAnalysis // Still provide video analysis
       };
     }
     
-    // Step 5: Search for fact-checks
-    const factCheckResults = await searchFactChecks(claim);
+    // Step 6: Search for fact-checks with timeline optimization
+    const factCheckResults = await searchFactChecks(claim, videoUrl, caption);
     
-    // Step 6: Analyze results (now async with latest article prioritization)
-    const analysis = await analyzeFactChecks(factCheckResults, claim);
+    // Step 7: Check logical consistency
+    const logicalConsistency = await checkLogicalConsistency(claim, videoAnalysis, factCheckResults);
     
-    // Step 7: Store result
+    // Step 8: Enhanced analysis with all new features
+    const analysis = await analyzeFactChecks(factCheckResults, claim, videoAnalysis, logicalConsistency);
+    
+    // Step 9: Store comprehensive result
     const resultId = storeFactCheckResult(senderId, claim, {
       transcription,
       caption,
       claim,
       analysis,
+      videoAnalysis,
+      logicalConsistency,
       timestamp: Date.now()
     });
     
@@ -1102,6 +1792,8 @@ const processInstagramReel = async (senderId, attachment) => {
       claim,
       transcription,
       analysis,
+      videoAnalysis,
+      logicalConsistency,
       resultId
     };
     
@@ -1110,8 +1802,9 @@ const processInstagramReel = async (senderId, attachment) => {
     throw error;
   } finally {
     // Cleanup temporary files
-    if (videoPath || audioPath) {
-      await cleanupFiles(videoPath, audioPath);
+    const filesToCleanup = [videoPath, audioPath, ...framePaths].filter(Boolean);
+    if (filesToCleanup.length > 0) {
+      await cleanupFiles(...filesToCleanup);
     }
   }
 };
@@ -1122,8 +1815,14 @@ module.exports = {
   storeFactCheckResult,
   downloadVideo,
   extractAudio,
+  extractVideoFrames,
+  analyzeVideoFrames,
   transcribeAudio,
   extractClaim,
+  checkLogicalConsistency,
+  detectVideoAge,
   searchFactChecks,
+  searchRedditForVerification,
+  analyzeRedditSentiment,
   analyzeFactChecks
 };

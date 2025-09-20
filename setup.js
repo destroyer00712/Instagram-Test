@@ -17,7 +17,8 @@ async function setup() {
     const directories = [
       'temp',
       'temp/videos',
-      'temp/audio'
+      'temp/audio',
+      'temp/frames'
     ];
     
     for (const dir of directories) {

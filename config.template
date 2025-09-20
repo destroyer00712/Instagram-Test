@@ -34,4 +34,5 @@ GOOGLE_FACTCHECK_API_KEY=your_google_factcheck_api_key_here
 
 # File Storage
 TEMP_VIDEO_DIR=./temp/videos/
-TEMP_AUDIO_DIR=./temp/audio/ 
+TEMP_AUDIO_DIR=./temp/audio/
+TEMP_FRAMES_DIR=./temp/frames/ 
