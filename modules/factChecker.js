@@ -219,11 +219,6 @@ const analyzeVideoFrames = async (framePaths, transcription = '') => {
   console.log(`🎬 Analyzing ${framePaths.length} video frames for visual context...`);
   
   try {
-    const model = genAI.getGenerativeModel({ 
-      model: MODELS.VIDEO_ANALYSIS,
-      generationConfig: GENERATION_CONFIGS.HIGH_ACCURACY
-    });
-    
     // Prepare frame data for analysis
     const frameData = [];
     for (const framePath of framePaths) {
@@ -235,7 +230,7 @@ const analyzeVideoFrames = async (framePaths, transcription = '') => {
             mimeType: 'image/jpeg'
           }
         });
-    } catch (error) {
+      } catch (error) {
         console.warn(`⚠️ Could not read frame ${framePath}:`, error.message);
       }
     }
@@ -276,7 +271,12 @@ OUTPUT FORMAT:
 
 Provide ONLY the JSON response:`;
     
-    const result = await model.generateContent([prompt, ...frameData]);
+    const { result, modelUsed } = await makeGeminiAPICall(
+      MODELS.VIDEO_ANALYSIS,
+      GENERATION_CONFIGS.HIGH_ACCURACY,
+      [prompt, ...frameData]
+    );
+    
     const analysisText = result.response.text().trim();
     
     try {
@@ -391,11 +391,6 @@ const checkLogicalConsistency = async (claim, videoAnalysis, factCheckResults) =
   console.log(`🧠 Checking logical consistency for claim: ${claim.substring(0, 100)}...`);
   
   try {
-    const model = genAI.getGenerativeModel({ 
-      model: MODELS.LOGICAL_CONSISTENCY,
-      generationConfig: GENERATION_CONFIGS.HIGH_ACCURACY
-    });
-    
     // Prepare evidence from fact-check results
     let evidenceText = '';
     if (factCheckResults?.claims?.length > 0) {
@@ -442,7 +437,12 @@ OUTPUT FORMAT:
 
 Provide ONLY the JSON response:`;
     
-    const result = await model.generateContent(prompt);
+    const { result, modelUsed } = await makeGeminiAPICall(
+      MODELS.LOGICAL_CONSISTENCY,
+      GENERATION_CONFIGS.HIGH_ACCURACY,
+      prompt
+    );
+    
     const analysisText = result.response.text().trim();
     
     try {
@@ -483,25 +483,6 @@ const extractClaim = async (transcription, caption) => {
   console.log(`🧠 Extracting claim from content...`);
   
   try {
-    // Try with Pro model first, fallback to Flash if needed
-    let model;
-    let modelName;
-    
-    try {
-      model = genAI.getGenerativeModel({ 
-        model: MODELS.CLAIM_ANALYSIS,
-        generationConfig: GENERATION_CONFIGS.BALANCED
-      });
-      modelName = MODELS.CLAIM_ANALYSIS;
-    } catch (error) {
-      console.log(`⚠️ Claim analysis fallback to ${MODELS.FALLBACK} model`);
-      model = genAI.getGenerativeModel({ 
-        model: MODELS.FALLBACK,
-        generationConfig: GENERATION_CONFIGS.BALANCED
-      });
-      modelName = MODELS.FALLBACK;
-    }
-    
     const prompt = `You are an expert fact-checker and media analyst specializing in identifying verifiable claims in social media content. Your task is to extract the PRIMARY factual claim that can be objectively verified.
 
 CONTENT TO ANALYZE:
@@ -555,10 +536,14 @@ Examples of GOOD claim extraction:
 
 Now extract the PRIMARY verifiable claim:`;
     
-    const result = await model.generateContent(prompt);
-    const claim = result.response.text().trim();
+    const { result, modelUsed } = await makeGeminiAPICall(
+      MODELS.CLAIM_ANALYSIS,
+      GENERATION_CONFIGS.BALANCED,
+      prompt
+    );
     
-    console.log(`✅ Extracted claim using ${modelName}: ${claim}`);
+    const claim = result.response.text().trim();
+    console.log(`✅ Extracted claim using ${modelUsed}: ${claim}`);
     
     // Enhanced validation of the claim extraction
     if (claim.toLowerCase().includes('no verifiable claim') || 
@@ -717,11 +702,6 @@ const analyzeRedditSentiment = async (redditResults, originalClaim) => {
   console.log(`📊 Analyzing Reddit sentiment from ${redditResults.posts.length} posts...`);
   
   try {
-    const model = genAI.getGenerativeModel({ 
-      model: MODELS.CLAIM_ANALYSIS,
-      generationConfig: GENERATION_CONFIGS.BALANCED
-    });
-    
     // Prepare Reddit content for analysis
     const redditContent = redditResults.posts.slice(0, 5).map(post => 
       `Title: ${post.title}\nSubreddit: r/${post.subreddit}\nScore: ${post.score}\nComments: ${post.num_comments}\nContent: ${post.selftext.substring(0, 300)}`
@@ -760,7 +740,12 @@ OUTPUT FORMAT:
 
 Provide ONLY the JSON response:`;
     
-    const result = await model.generateContent(prompt);
+    const { result, modelUsed } = await makeGeminiAPICall(
+      MODELS.CLAIM_ANALYSIS,
+      GENERATION_CONFIGS.BALANCED,
+      prompt
+    );
+    
     const analysisText = result.response.text().trim();
     
     try {
@@ -1154,11 +1139,6 @@ const analyzeArticleContent = async (articleContent, originalClaim, articleTitle
   console.log(`🔍 AI analyzing article content for independent inference...`);
   
   try {
-    const model = genAI.getGenerativeModel({ 
-      model: MODELS.CLAIM_ANALYSIS,
-      generationConfig: GENERATION_CONFIGS.BALANCED
-    });
-    
     const prompt = `You are an expert fact-checker conducting an independent analysis of a news article to verify a specific claim. Your task is to read the full article content and provide your own professional assessment.
 
 CLAIM TO VERIFY: "${originalClaim}"
@@ -1213,7 +1193,12 @@ OUTPUT FORMAT:
 
 Provide ONLY the JSON response with your independent analysis:`;
     
-    const result = await model.generateContent(prompt);
+    const { result, modelUsed } = await makeGeminiAPICall(
+      MODELS.CLAIM_ANALYSIS,
+      GENERATION_CONFIGS.BALANCED,
+      prompt
+    );
+    
     const analysisText = result.response.text().trim();
     
     try {
