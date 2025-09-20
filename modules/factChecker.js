@@ -1251,21 +1251,27 @@ const extractFromText = (text, possibleValues) => {
 
 /**
  * Enhanced fact-check analysis with logical consistency, Reddit integration, and weighted scoring
+ * NEW: Reddit gets 0 weight when articles are present, article content prioritized over verdicts
  */
 const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis = null, logicalConsistency = null) => {
-  console.log(`📊 Analyzing fact-check results with latest article prioritization...`);
+  console.log(`📊 Analyzing fact-check results with article content prioritization over verdicts...`);
   
-  // If no Google fact-check results, try Reddit as fallback
+  // Check if we have fact-check articles
+  const hasFactCheckArticles = factCheckResults.claims && factCheckResults.claims.length > 0;
+  
+  // Reddit analysis for informational purposes, but gets 0 weight if articles are present
   let redditAnalysis = null;
-  if (!factCheckResults.claims || factCheckResults.claims.length === 0) {
-    console.log('🔄 No Google fact-check results found, searching Reddit...');
-    
-    try {
-      const redditResults = await searchRedditForVerification(originalClaim);
-      if (redditResults.total_posts > 0) {
-        redditAnalysis = await analyzeRedditSentiment(redditResults, originalClaim);
+  try {
+    console.log('🔄 Running Reddit analysis for informational purposes...');
+    const redditResults = await searchRedditForVerification(originalClaim);
+    if (redditResults.total_posts > 0) {
+      redditAnalysis = await analyzeRedditSentiment(redditResults, originalClaim);
+      console.log(`📊 Reddit sentiment: ${redditAnalysis.sentiment} (${(redditAnalysis.confidence * 100).toFixed(0)}% confidence)`);
+      
+      // If no fact-check articles, Reddit can still provide fallback verdict
+      if (!hasFactCheckArticles) {
+        console.log('📰 No fact-check articles found - using Reddit as primary source');
         
-        // Generate verdict based on Reddit analysis
         let redditVerdict = 'Unknown';
         let redditConfidence = 'Low';
         
@@ -1292,11 +1298,16 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
           logicalConsistency: logicalConsistency,
           source: 'reddit_fallback'
         };
+      } else {
+        console.log('📰 Fact-check articles found - Reddit analysis will have 0 weight in final verdict');
       }
-    } catch (error) {
-      console.error('❌ Reddit fallback failed:', error);
     }
-    
+  } catch (error) {
+    console.error('❌ Reddit analysis failed:', error);
+  }
+  
+  // If no fact-check articles and no Reddit results
+  if (!hasFactCheckArticles) {
     return {
       verdict: 'Unknown',
       confidence: 'Low',
@@ -1340,41 +1351,58 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
     console.log(`  ${index + 1}. ${source.publisher} (${source.reviewDate}) - ${source.rating}`);
   });
   
-  // Get the LATEST article for detailed analysis
-  const latestSource = allSources[0];
+  // Analyze ALL articles for content-based verdicts (not just the latest)
+  console.log(`🔍 Analyzing content from all ${allSources.length} articles for AI inference...`);
+  const articleAnalyses = [];
   let latestArticleAnalysis = null;
-  let aiInference = null;
   
-  if (latestSource) {
-    console.log(`🔍 Analyzing LATEST article: ${latestSource.publisher} (${latestSource.reviewDate})`);
-    
+  // Process multiple articles in parallel (limit to top 3 for performance)
+  const articlesToAnalyze = allSources.slice(0, 3);
+  const analysisPromises = articlesToAnalyze.map(async (source, index) => {
     try {
-      // Scrape the latest article content
+      console.log(`📰 Analyzing article ${index + 1}: ${source.publisher} (${source.reviewDate})`);
+      
+      // Scrape the article content
       const articleContent = await scrapeArticleContent(
-        latestSource.url, 
-        latestSource.title
+        source.url, 
+        source.title
       );
       
       if (articleContent) {
         // Get AI's independent analysis of the article
-        aiInference = await analyzeArticleContent(
+        const aiInference = await analyzeArticleContent(
           articleContent,
           originalClaim,
-          latestSource.title,
-          latestSource.publisher,
-          latestSource.url
+          source.title,
+          source.publisher,
+          source.url
         );
         
-        latestArticleAnalysis = {
-          source: latestSource,
+        const analysis = {
+          source: source,
           fullContent: articleContent.substring(0, 1000) + '...', // Truncate for storage
-          aiAnalysis: aiInference
+          aiAnalysis: aiInference,
+          index: index
         };
+        
+        // Track the latest article analysis separately
+        if (index === 0) {
+          latestArticleAnalysis = analysis;
+        }
+        
+        return analysis;
       }
     } catch (error) {
-      console.error(`❌ Error analyzing latest article:`, error.message);
+      console.error(`❌ Error analyzing article ${index + 1} (${source.publisher}):`, error.message);
     }
-  }
+    return null;
+  });
+  
+  // Wait for all article analyses to complete
+  const completedAnalyses = (await Promise.all(analysisPromises)).filter(Boolean);
+  articleAnalyses.push(...completedAnalyses);
+  
+  console.log(`✅ Completed AI analysis for ${articleAnalyses.length} articles`);
   
   // Publisher credibility weights
   const publisherWeights = {
@@ -1391,9 +1419,11 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
     'fox news': 0.7
   };
   
-  // Calculate weighted verdict with HEAVY bias toward latest articles
+  // Calculate weighted verdict with ARTICLE CONTENT prioritized over fact-check verdicts
   let falseScore = 0, trueScore = 0, mixedScore = 0, totalWeight = 0;
   const analysisData = [];
+  
+  console.log(`🎯 NEW WEIGHTING STRATEGY: Article content analysis prioritized over traditional verdicts`);
   
   allSources.forEach((source, index) => {
     const publisherName = (source.publisher || 'Unknown').toLowerCase();
@@ -1407,12 +1437,17 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
     
     const effectiveWeight = baseWeight * recencyMultiplier;
     
-    // If we have AI analysis for the latest article, use that verdict
+    // Find AI analysis for this source (PRIORITY: Article content over verdict)
+    const aiAnalysis = articleAnalyses.find(analysis => analysis.index === index);
     let normalizedRating = 'unknown';
     let confidence = 0.5;
+    let verdictSource = 'traditional_rating';
     
-    if (index === 0 && aiInference) {
-      // Use AI's independent analysis for the latest article
+    if (aiAnalysis && aiAnalysis.aiAnalysis) {
+      // PRIORITIZE: AI analysis of article content over traditional fact-check verdicts
+      const aiInference = aiAnalysis.aiAnalysis;
+      verdictSource = 'article_content_ai';
+      
       switch (aiInference.verdict) {
         case 'TRUE':
           normalizedRating = 'true';
@@ -1426,31 +1461,38 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
           normalizedRating = 'mixed';
           confidence = 0.75;
           break;
+        default:
+          // If AI analysis is insufficient, fall back to traditional rating with reduced weight
+          verdictSource = 'ai_insufficient_fallback';
+          confidence = 0.3; // Reduced confidence for fallback
       }
-      console.log(`🤖 Using AI inference for latest article: ${normalizedRating} (${confidence})`);
+      
+      console.log(`🤖 Article ${index + 1} (${source.publisher}): Using AI content analysis - ${normalizedRating} (${confidence}) [${verdictSource}]`);
+      
     } else {
-      // Use traditional rating analysis for other sources
+      // Fallback to traditional rating analysis with reduced weight when no article content analysis
       const rating = source.rating.toLowerCase();
+      confidence = 0.4; // Reduced base confidence for traditional ratings
+      
       if (rating.includes('false') || rating.includes('incorrect') || rating.includes('misleading') || 
           rating.includes('pants on fire') || rating.includes('fake') || rating.includes('fabricated')) {
         normalizedRating = 'false';
-        confidence = 0.9;
       } else if (rating.includes('true') || rating.includes('correct') || rating.includes('accurate') || 
                  rating.includes('verified') || rating.includes('confirmed')) {
         normalizedRating = 'true';
-        confidence = 0.9;
       } else if (rating.includes('partially') || rating.includes('mixed') || rating.includes('half') || 
                  rating.includes('mostly') || rating.includes('some')) {
         normalizedRating = 'mixed';
-        confidence = 0.7;
       }
+      
+      console.log(`📰 Article ${index + 1} (${source.publisher}): Using traditional rating - ${normalizedRating} (${confidence}) [fallback]`);
     }
     
-    // Apply logical consistency adjustment
+    // Apply logical consistency adjustment only to latest article with AI analysis
     let logicalAdjustment = 0;
-    if (logicalConsistency && index === 0) { // Only apply to latest source
+    if (logicalConsistency && index === 0 && aiAnalysis) {
       logicalAdjustment = logicalConsistency.weight_adjustment || 0;
-      console.log(`🧠 Applying logical consistency adjustment: ${logicalAdjustment}`);
+      console.log(`🧠 Applying logical consistency adjustment to latest article: ${logicalAdjustment}`);
     }
     
     const finalWeight = (effectiveWeight * confidence) + logicalAdjustment;
@@ -1471,9 +1513,13 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
       baseWeight,
       recencyMultiplier,
       finalWeight,
-      isLatest: index === 0
+      verdictSource,
+      isLatest: index === 0,
+      hasAIAnalysis: !!aiAnalysis
     });
   });
+  
+  console.log(`📊 Weighting Summary: ${analysisData.filter(a => a.hasAIAnalysis).length}/${allSources.length} sources used AI content analysis`);
   
   // Determine final verdict based on weighted scores
   let primaryVerdict = 'Unknown';
@@ -1497,13 +1543,23 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
       overallConfidence = 'Medium';
     }
     
-    // Boost confidence if latest article analysis is strong
-    if (aiInference && aiInference.confidence === 'HIGH' && overallConfidence !== 'High') {
+    // Boost confidence if multiple articles have AI content analysis
+    const aiAnalysisCount = analysisData.filter(a => a.hasAIAnalysis).length;
+    const highConfidenceAICount = articleAnalyses.filter(a => a.aiAnalysis?.confidence === 'HIGH').length;
+    
+    if (highConfidenceAICount >= 2 && overallConfidence !== 'High') {
+      overallConfidence = 'High';
+      console.log(`🚀 Confidence boosted to High: ${highConfidenceAICount} articles with high-confidence AI analysis`);
+    } else if (aiAnalysisCount >= 2 && overallConfidence === 'Low') {
       overallConfidence = 'Medium';
+      console.log(`📈 Confidence boosted to Medium: ${aiAnalysisCount} articles with AI content analysis`);
+    } else if (latestArticleAnalysis && latestArticleAnalysis.aiAnalysis?.confidence === 'HIGH' && overallConfidence !== 'High') {
+      overallConfidence = 'Medium';
+      console.log(`📈 Confidence boosted to Medium: Latest article has high-confidence AI analysis`);
     }
   }
   
-  const summary = generateLatestFocusedSummary(primaryVerdict, overallConfidence, allSources.length, latestArticleAnalysis, aiInference, factCheckResults);
+  const summary = generateContentPrioritizedSummary(primaryVerdict, overallConfidence, allSources.length, articleAnalyses, latestArticleAnalysis, factCheckResults);
   
   return {
     verdict: primaryVerdict,
@@ -1511,16 +1567,19 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
     summary,
     sources: allSources.slice(0, 4), // Top 4 sources (latest first)
     latestArticleAnalysis,
+    allArticleAnalyses: articleAnalyses, // NEW: All AI content analyses
     videoAnalysis: videoAnalysis,
     logicalConsistency: logicalConsistency,
-    redditAnalysis: redditAnalysis,
+    redditAnalysis: redditAnalysis, // Note: Has 0 weight when articles are present
     analysisDetails: {
       totalSources: allSources.length,
-      latestSourcePriority: true,
+      contentAnalysisPrioritized: true, // NEW: Flag indicating content over verdict priority
+      articlesWithAIAnalysis: analysisData.filter(a => a.hasAIAnalysis).length,
+      redditWeight: hasFactCheckArticles ? 0 : 1, // NEW: Shows Reddit gets 0 weight when articles present
       falseRatio: totalWeight > 0 ? (falseScore / totalWeight).toFixed(2) : '0',
       trueRatio: totalWeight > 0 ? (trueScore / totalWeight).toFixed(2) : '0',
       mixedRatio: totalWeight > 0 ? (mixedScore / totalWeight).toFixed(2) : '0',
-      aiInferenceUsed: !!aiInference,
+      aiContentAnalysisUsed: articleAnalyses.length > 0, // NEW: Multiple AI analyses
       logicalConsistencyUsed: !!logicalConsistency,
       videoAnalysisUsed: !!videoAnalysis,
       searchStrategy: factCheckResults.searchStrategy?.description || 'unknown',
@@ -1581,7 +1640,92 @@ const generateRedditBasedSummary = (verdict, redditAnalysis, totalPosts) => {
 };
 
 /**
- * Generate latest-focused summary based on analysis
+ * Generate content-prioritized summary based on analysis (NEW: Emphasizes article content over verdicts)
+ */
+const generateContentPrioritizedSummary = (verdict, confidence, sourceCount, articleAnalyses, latestArticleAnalysis, factCheckResults = null) => {
+  let summary = `📊 **CONTENT-PRIORITIZED ANALYSIS** (article content weighted higher than verdicts)\n\n`;
+  
+  const aiAnalysisCount = articleAnalyses.length;
+  const highConfidenceCount = articleAnalyses.filter(a => a.aiAnalysis?.confidence === 'HIGH').length;
+  
+  if (aiAnalysisCount > 0) {
+    summary += `🤖 **AI Content Analysis**: Analyzed full content from ${aiAnalysisCount} article${aiAnalysisCount !== 1 ? 's' : ''}\n`;
+    
+    if (highConfidenceCount > 0) {
+      summary += `🎯 **High Confidence**: ${highConfidenceCount} article${highConfidenceCount !== 1 ? 's' : ''} provided high-confidence analysis\n`;
+    }
+    
+    // Show breakdown of AI verdicts
+    const aiVerdicts = articleAnalyses.map(a => a.aiAnalysis?.verdict).filter(Boolean);
+    if (aiVerdicts.length > 1) {
+      const verdictCounts = aiVerdicts.reduce((acc, v) => {
+        acc[v] = (acc[v] || 0) + 1;
+        return acc;
+      }, {});
+      summary += `📈 **Content Verdict Distribution**: ${Object.entries(verdictCounts).map(([v, c]) => `${v}(${c})`).join(', ')}\n`;
+    }
+    summary += `\n`;
+  }
+  
+  if (latestArticleAnalysis && latestArticleAnalysis.aiAnalysis) {
+    const latestSource = latestArticleAnalysis.source;
+    const aiInference = latestArticleAnalysis.aiAnalysis;
+    
+    summary += `🔍 **Latest Article Deep-Dive**: ${latestSource.publisher} (${latestSource.reviewDate})\n`;
+    summary += `🤖 **AI Content Assessment**: ${aiInference.verdict} (${aiInference.confidence} confidence)\n`;
+    summary += `📋 **Evidence Found**: ${aiInference.evidence_summary}\n\n`;
+    
+    if (aiInference.key_facts && aiInference.key_facts.length > 0) {
+      summary += `🎯 **Key Facts from Latest Article**:\n`;
+      aiInference.key_facts.slice(0, 3).forEach((fact, index) => {
+        summary += `  ${index + 1}. ${fact}\n`;
+      });
+      summary += `\n`;
+    }
+  }
+  
+  // Overall verdict with new emphasis
+  summary += `⭐ **FINAL VERDICT**: `;
+  switch (verdict) {
+    case 'True':
+      summary += `**CONFIRMED TRUE** - Article content analysis supports this claim`;
+      break;
+    case 'False':
+      summary += `**DEBUNKED FALSE** - Article content analysis contradicts this claim`;
+      break;
+    case 'Mixed':
+      summary += `**MIXED ACCURACY** - Article content shows partial truth with important caveats`;
+      break;
+    default:
+      summary += `**INCONCLUSIVE** - Article content insufficient to determine accuracy`;
+  }
+  
+  summary += `\n📈 **Confidence Level**: ${confidence}`;
+  
+  if (aiAnalysisCount > 0) {
+    summary += ` (Based on AI analysis of ${aiAnalysisCount} full article${aiAnalysisCount !== 1 ? 's' : ''})`;
+  }
+  
+  summary += `\n\n📚 **Analysis Method**: Content-first approach - article content prioritized over verdict labels`;
+  summary += `\n🔍 **Sources Analyzed**: ${sourceCount} total (${aiAnalysisCount} with full content analysis)`;
+  summary += `\n⚠️ **Reddit Weight**: 0 (Reddit analysis provided for context only when fact-check articles are present)`;
+  
+  // Add timeline search information if available
+  if (factCheckResults && factCheckResults.searchStrategy) {
+    summary += `\n🔍 **Search Strategy**: Found results using ${factCheckResults.searchStrategy.description} search`;
+    if (factCheckResults.totalStrategiesTried > 1) {
+      summary += ` (tried ${factCheckResults.totalStrategiesTried} timeline strategies)`;
+    }
+    if (factCheckResults.estimatedVideoAge) {
+      summary += `\n📅 **Estimated Content Age**: ~${factCheckResults.estimatedVideoAge} days old`;
+    }
+  }
+  
+  return summary;
+};
+
+/**
+ * Generate latest-focused summary based on analysis (LEGACY - kept for compatibility)
  */
 const generateLatestFocusedSummary = (verdict, confidence, sourceCount, latestArticleAnalysis, aiInference, factCheckResults = null) => {
   let summary = `📊 **LATEST ARTICLE ANALYSIS** (prioritizing most recent reporting)\n\n`;
@@ -1752,6 +1896,209 @@ const getUserFactCheckHistory = (userId) => {
 };
 
 /**
+ * Search user's fact-check history for relevant content using semantic matching
+ */
+const searchFactCheckMemory = async (userId, userQuery) => {
+  console.log(`🔍 Searching fact-check memory for user ${userId}: "${userQuery}"`);
+  
+  const userHistory = getUserFactCheckHistory(userId);
+  
+  if (!userHistory || userHistory.length === 0) {
+    console.log(`📭 No fact-check history found for user ${userId}`);
+    return [];
+  }
+  
+  try {
+    // Use Gemini AI to find semantically similar fact-checks
+    const prompt = `You are an AI assistant helping users find relevant fact-checks from their history. 
+
+USER QUERY: "${userQuery}"
+
+FACT-CHECK HISTORY:
+${userHistory.map((check, index) => 
+  `${index + 1}. CLAIM: "${check.result.claim}"
+   VERDICT: ${check.result.analysis.verdict}
+   DATE: ${new Date(check.timestamp).toLocaleDateString()}
+   SUMMARY: ${check.result.analysis.summary ? check.result.analysis.summary.substring(0, 200) + '...' : 'No summary'}
+   ---`
+).join('\n')}
+
+TASK: Find the most relevant fact-checks that relate to the user's query. Consider:
+- Semantic similarity (similar topics, people, events)  
+- Keywords and entities mentioned
+- Context and intent of the user's question
+
+OUTPUT: Return a JSON array with the indices (0-based) of the most relevant fact-checks, ordered by relevance.
+If no relevant fact-checks are found, return an empty array.
+
+EXAMPLES:
+- Query "What about that election claim?" → Look for election-related fact-checks
+- Query "Remember the vaccine thing?" → Look for vaccine/medical fact-checks  
+- Query "That celebrity news" → Look for celebrity-related fact-checks
+
+Provide ONLY the JSON array of indices: [0, 2, 5] or []`;
+
+    const { result, modelUsed } = await makeGeminiAPICall(
+      MODELS.CLAIM_ANALYSIS,
+      GENERATION_CONFIGS.BALANCED,
+      prompt
+    );
+    
+    const responseText = result.response.text().trim();
+    
+    try {
+      const relevantIndices = JSON.parse(responseText);
+      
+      if (!Array.isArray(relevantIndices)) {
+        console.log('⚠️ AI returned non-array result, falling back to keyword search');
+        return keywordSearchMemory(userHistory, userQuery);
+      }
+      
+      const relevantChecks = relevantIndices
+        .filter(index => index >= 0 && index < userHistory.length)
+        .map(index => userHistory[index]);
+      
+      console.log(`✅ Found ${relevantChecks.length} relevant fact-checks using AI semantic search`);
+      return relevantChecks;
+      
+    } catch (jsonError) {
+      console.log('⚠️ AI response not valid JSON, falling back to keyword search');
+      return keywordSearchMemory(userHistory, userQuery);
+    }
+    
+  } catch (error) {
+    console.error('❌ Error in semantic search, falling back to keyword search:', error);
+    return keywordSearchMemory(userHistory, userQuery);
+  }
+};
+
+/**
+ * Fallback keyword-based search for fact-check memory
+ */
+const keywordSearchMemory = (userHistory, userQuery) => {
+  console.log(`🔤 Using keyword-based fallback search`);
+  
+  const queryWords = userQuery.toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(' ')
+    .filter(word => word.length > 2 && !['the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'was', 'one', 'our', 'out'].includes(word));
+  
+  if (queryWords.length === 0) return [];
+  
+  const scoredResults = userHistory.map(check => {
+    const searchText = `${check.result.claim} ${check.result.analysis.summary || ''}`.toLowerCase();
+    let score = 0;
+    
+    queryWords.forEach(word => {
+      if (searchText.includes(word)) {
+        score += 1;
+      }
+    });
+    
+    return { check, score };
+  });
+  
+  const relevantChecks = scoredResults
+    .filter(result => result.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map(result => result.check);
+  
+  console.log(`✅ Found ${relevantChecks.length} relevant fact-checks using keyword search`);
+  return relevantChecks;
+};
+
+/**
+ * Generate conversational response about fact-checked content
+ */
+const generateConversationalResponse = async (userId, userQuery, relevantFactChecks) => {
+  console.log(`💬 Generating conversational response for user ${userId}`);
+  
+  if (!relevantFactChecks || relevantFactChecks.length === 0) {
+    return {
+      found: false,
+      response: "I don't see any previous fact-checks that relate to what you're asking about. Feel free to share more details or send me a new video to fact-check! 🔍"
+    };
+  }
+  
+  try {
+    // Prepare context from relevant fact-checks
+    const factCheckContext = relevantFactChecks.map((check, index) => {
+      const analysis = check.result.analysis;
+      return `FACT-CHECK #${index + 1}:
+CLAIM: "${check.result.claim}"
+VERDICT: ${analysis.verdict} 
+CONFIDENCE: ${analysis.confidence}
+DATE CHECKED: ${new Date(check.timestamp).toLocaleDateString()}
+KEY FINDINGS: ${analysis.summary ? analysis.summary.substring(0, 300) : 'No detailed summary available'}
+SOURCES: ${analysis.sources ? analysis.sources.slice(0, 2).map(s => s.publisher).join(', ') : 'None'}
+---`;
+    }).join('\n\n');
+    
+    const prompt = `You are a friendly, knowledgeable fact-checking assistant having a conversation with someone about news they previously asked you to verify. Respond in a natural, human-like way.
+
+USER'S QUESTION: "${userQuery}"
+
+RELEVANT FACT-CHECKS FROM THEIR HISTORY:
+${factCheckContext}
+
+INSTRUCTIONS:
+1. **Be conversational and natural** - Talk like a knowledgeable friend, not a robot
+2. **Reference their previous fact-checks** - Mention "Remember when you asked me about..." or "You fact-checked this before..."
+3. **Give human-like insights** - Share what the evidence shows in plain language
+4. **Be helpful and engaging** - Offer to explain more or fact-check related content
+5. **Use appropriate emojis** - But don't overdo it, keep it natural
+6. **Keep it concise** - 2-3 paragraphs maximum unless they ask for details
+
+TONE: Friendly, informative, conversational - like you're chatting with a friend about news
+
+AVOID:
+- Robotic language like "Based on analysis" or "According to data"  
+- Overly formal or technical language
+- Just repeating the verdict without context
+- Being preachy or judgmental
+
+Example good response:
+"Hey, remember when you asked me about that vaccine claim a couple weeks ago? That turned out to be false - the sources I found showed the numbers were completely made up. The real data from the CDC was totally different. Is there something specific about it you wanted to know more about? 🤔"
+
+Generate a natural, conversational response:`;
+
+    const { result, modelUsed } = await makeGeminiAPICall(
+      MODELS.CLAIM_ANALYSIS,
+      GENERATION_CONFIGS.BALANCED,
+      prompt
+    );
+    
+    const conversationalResponse = result.response.text().trim();
+    
+    console.log(`✅ Generated conversational response (${conversationalResponse.length} chars)`);
+    
+    return {
+      found: true,
+      response: conversationalResponse,
+      relevantChecks: relevantFactChecks
+    };
+    
+  } catch (error) {
+    console.error('❌ Error generating conversational response:', error);
+    
+    // Fallback to simple response
+    const check = relevantFactChecks[0];
+    const fallbackResponse = `I found that you previously fact-checked something related: "${check.result.claim}" 
+    
+The verdict was **${check.result.analysis.verdict}** with ${check.result.analysis.confidence} confidence. 
+
+Want me to share more details about this, or do you have a new claim to fact-check? 🤔`;
+    
+    return {
+      found: true,
+      response: fallbackResponse,
+      relevantChecks: relevantFactChecks
+    };
+  }
+};
+
+/**
  * Cleanup temporary files
  */
 const cleanupFiles = async (...filePaths) => {
@@ -1873,5 +2220,8 @@ module.exports = {
   searchFactChecks,
   searchRedditForVerification,
   analyzeRedditSentiment,
-  analyzeFactChecks
+  analyzeFactChecks,
+  // NEW: Memory and conversational features
+  searchFactCheckMemory,
+  generateConversationalResponse
 };

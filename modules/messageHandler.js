@@ -82,39 +82,39 @@ Want to learn more about any specific service? Just ask! 😊`,
   factCheckProcessing: "🔍 I'm analyzing this video for fact-checking. This may take a moment...",
   
   factCheckComplete: (claim, analysis) => {
-    let message = `🎯 **Claim**: ${claim}\n\n`;
+    // Start with a human-like opener based on verdict
+    let message = '';
+    switch (analysis.verdict) {
+      case 'True':
+        message = `✅ **Good news!** I checked that claim and it looks legit.\n\n`;
+        break;
+      case 'False':
+        message = `❌ **Heads up** - I found some issues with that claim.\n\n`;
+        break;
+      case 'Mixed':
+        message = `⚖️ **It's complicated** - there's some truth here but with important caveats.\n\n`;
+        break;
+      default:
+        message = `🤔 **Here's what I found** about that claim:\n\n`;
+    }
     
-    // Use the new latest-focused summary
+    message += `🎯 **The Claim**: "${claim}"\n\n`;
+    
+    // Use the enhanced summary (content-prioritized or latest-focused)
     message += analysis.summary;
     
-    // Add latest article analysis if available
-    if (analysis.latestArticleAnalysis && analysis.latestArticleAnalysis.aiAnalysis) {
-      const aiAnalysis = analysis.latestArticleAnalysis.aiAnalysis;
-      message += `\n\n🤖 **AI Reasoning**: ${aiAnalysis.reasoning}`;
-      
-      if (aiAnalysis.credibility_assessment) {
-        message += `\n\n📊 **Source Assessment**: ${aiAnalysis.credibility_assessment}`;
-      }
+    // Add conversational closing based on confidence
+    message += `\n\n`;
+    if (analysis.confidence === 'High') {
+      message += `💪 I'm pretty confident about this one - multiple reliable sources lined up.`;
+    } else if (analysis.confidence === 'Medium') {
+      message += `🤷‍♂️ I'm moderately confident, but feel free to ask if you want me to dig deeper.`;
+    } else {
+      message += `🔍 The evidence is limited, so take this with a grain of salt.`;
     }
     
-    // Show sources with latest first
-    if (analysis.sources && analysis.sources.length > 0) {
-      message += `\n\n🔗 **Sources** (Latest First):\n`;
-      analysis.sources.forEach((source, index) => {
-        const isLatest = index === 0 ? '🆕 ' : '';
-        message += `${index + 1}. ${isLatest}${source.publisher} (${source.reviewDate}) - ${source.rating}\n`;
-        if (source.url) {
-          message += `   ${source.url}\n`;
-        }
-      });
-    }
+    message += `\n\n💬 **Questions?** Just ask me about this claim, or send another video to fact-check! You can even say things like "tell me more about that story" or "what about that election claim?"`;
     
-    // Add analysis details
-    if (analysis.analysisDetails && analysis.analysisDetails.aiInferenceUsed) {
-      message += `\n🎯 **Analysis Method**: Latest article content analyzed by AI + ${analysis.analysisDetails.totalSources} total sources reviewed`;
-    }
-    
-    message += `\n\n💬 Ask me "history" to see your fact-check history or share another reel!`;
     return message;
   },
   
@@ -176,7 +176,7 @@ const processMessage = async (senderId, messageText, timestamp) => {
     }
     
     // Process the message based on content
-    const response = await generateResponse(messageText, userState);
+    const response = await generateResponse(messageText, userState, senderId);
     
     // Add small delay to simulate human-like response
     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -286,7 +286,7 @@ const handleNewUser = async (senderId, userState) => {
 /**
  * Generate response based on message content
  */
-const generateResponse = async (messageText, userState) => {
+const generateResponse = async (messageText, userState, senderId) => {
   const text = messageText.toLowerCase().trim();
   
   // Keyword matching
@@ -347,6 +347,7 @@ const generateResponse = async (messageText, userState) => {
     };
   }
   
+  // Enhanced fact-check history with simple listing
   if (text.includes('fact-check') || text.includes('factcheck') || text.includes('history') || text.includes('previous')) {
     const history = factChecker.getUserFactCheckHistory(senderId);
     return {
@@ -355,11 +356,100 @@ const generateResponse = async (messageText, userState) => {
     };
   }
   
+  // NEW: Conversational memory search for news/content questions
+  if (await shouldSearchMemory(text, senderId)) {
+    console.log(`🧠 Detected potential memory query: "${messageText}"`);
+    
+    try {
+      // Search user's fact-check memory
+      const relevantChecks = await factChecker.searchFactCheckMemory(senderId, messageText);
+      
+      if (relevantChecks && relevantChecks.length > 0) {
+        // Generate conversational response
+        const conversationalResult = await factChecker.generateConversationalResponse(
+          senderId, 
+          messageText, 
+          relevantChecks
+        );
+        
+        if (conversationalResult.found) {
+          console.log(`✅ Generated conversational response about previous fact-checks`);
+          return {
+            type: 'text',
+            text: conversationalResult.response
+          };
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error in memory search:', error);
+      // Fall through to default response if memory search fails
+    }
+  }
+  
   // Default response
   return {
     type: 'text',
     text: getRandomResponse(botResponses.default)
   };
+};
+
+/**
+ * Determine if we should search memory for this message
+ */
+const shouldSearchMemory = async (text, senderId) => {
+  // First check if user has any fact-check history
+  const history = factChecker.getUserFactCheckHistory(senderId);
+  if (!history || history.length === 0) {
+    return false;
+  }
+  
+  // Quick keyword filters - definitely search memory for these
+  const memoryKeywords = [
+    'remember', 'recall', 'before', 'earlier', 'previous', 'last time',
+    'that thing', 'that story', 'that claim', 'that news', 'that video',
+    'what about', 'tell me about', 'explain', 'more about', 'details about'
+  ];
+  
+  if (memoryKeywords.some(keyword => text.includes(keyword))) {
+    console.log(`🎯 Memory search triggered by keyword: "${text}"`);
+    return true;
+  }
+  
+  // Don't search for basic commands/responses
+  const skipKeywords = [
+    'hello', 'hi', 'help', 'menu', 'about', 'contact', 'hours', 'services',
+    'thank', 'thanks', 'yes', 'no', 'ok', 'okay'
+  ];
+  
+  if (skipKeywords.some(keyword => text.includes(keyword))) {
+    return false;
+  }
+  
+  // For longer messages (5+ words), likely asking about content
+  const words = text.split(' ').filter(word => word.length > 2);
+  if (words.length >= 5) {
+    console.log(`🤔 Long message detected, checking for content questions: "${text}"`);
+    
+    // Look for question patterns
+    const questionPatterns = [
+      /what (is|was|about|happened)/,
+      /how (did|does|is|was)/,
+      /why (did|does|is|was)/,
+      /when (did|does|is|was)/,
+      /where (did|does|is|was)/,
+      /who (is|was|did)/,
+      /can you (tell|explain|share)/,
+      /(true|false|real|fake)/,
+      /(news|story|claim|report)/
+    ];
+    
+    if (questionPatterns.some(pattern => pattern.test(text))) {
+      console.log(`❓ Question pattern detected, searching memory`);
+      return true;
+    }
+  }
+  
+  return false;
 };
 
 /**
