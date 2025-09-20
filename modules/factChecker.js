@@ -235,7 +235,7 @@ const analyzeVideoFrames = async (framePaths, transcription = '') => {
             mimeType: 'image/jpeg'
           }
         });
-      } catch (error) {
+    } catch (error) {
         console.warn(`⚠️ Could not read frame ${framePath}:`, error.message);
       }
     }
@@ -336,10 +336,10 @@ CRITICAL: Return ONLY the transcription text. No prefixes, explanations, or addi
 Audio file to transcribe:`;
     
     const additionalContent = [{
-      inlineData: {
-        data: audioBuffer.toString('base64'),
-        mimeType: 'audio/mp3'
-      }
+        inlineData: {
+          data: audioBuffer.toString('base64'),
+          mimeType: 'audio/mp3'
+        }
     }];
     
     const { result, modelUsed } = await makeGeminiAPICall(
