@@ -7,7 +7,59 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const cheerio = require('cheerio');
 
 // Initialize Gemini AI with Pro model for better accuracy
+console.log('🔑 Initializing Gemini AI...');
+console.log('🔑 GEMINI_API_KEY exists:', !!process.env.GEMINI_API_KEY);
+console.log('🔑 GEMINI_API_KEY length:', process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.length : 'undefined');
+console.log('🔑 GEMINI_API_KEY first 10 chars:', process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.substring(0, 10) + '...' : 'undefined');
+console.log('🔑 GEMINI_API_KEY last 10 chars:', process.env.GEMINI_API_KEY ? '...' + process.env.GEMINI_API_KEY.substring(process.env.GEMINI_API_KEY.length - 10) : 'undefined');
+
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+/**
+ * Helper function to make Gemini API calls with automatic quota fallback
+ */
+const makeGeminiAPICall = async (modelName, generationConfig, prompt, additionalContent = []) => {
+  console.log(`🤖 [makeGeminiAPICall] Attempting API call with model: ${modelName}`);
+  
+  try {
+    const model = genAI.getGenerativeModel({ 
+      model: modelName,
+      generationConfig: generationConfig
+    });
+    
+    const content = Array.isArray(prompt) ? prompt : [prompt, ...additionalContent];
+    const result = await model.generateContent(content);
+    
+    console.log(`✅ [makeGeminiAPICall] API call successful with model: ${modelName}`);
+    return { result, modelUsed: modelName };
+    
+  } catch (error) {
+    // If Pro model fails with quota error, automatically try Flash
+    if (modelName.includes('pro') && error.message && error.message.includes('quota')) {
+      console.log(`⚠️ [makeGeminiAPICall] ${modelName} quota exceeded, falling back to ${MODELS.FALLBACK}`);
+      
+      try {
+        const fallbackModel = genAI.getGenerativeModel({ 
+          model: MODELS.FALLBACK,
+          generationConfig: generationConfig
+        });
+        
+        const content = Array.isArray(prompt) ? prompt : [prompt, ...additionalContent];
+        const result = await fallbackModel.generateContent(content);
+        
+        console.log(`✅ [makeGeminiAPICall] Fallback API call successful with model: ${MODELS.FALLBACK}`);
+        return { result, modelUsed: MODELS.FALLBACK };
+        
+      } catch (fallbackError) {
+        console.log(`❌ [makeGeminiAPICall] Fallback also failed:`, fallbackError.message);
+        throw fallbackError;
+      }
+    } else {
+      // Re-throw if it's not a quota error or not a Pro model
+      throw error;
+    }
+  }
+};
 
 // Model configurations for different tasks
 const MODELS = {
@@ -15,7 +67,7 @@ const MODELS = {
   CLAIM_ANALYSIS: 'gemini-1.5-pro', // Best for complex reasoning
   VIDEO_ANALYSIS: 'gemini-1.5-pro', // Best for video frame analysis
   LOGICAL_CONSISTENCY: 'gemini-1.5-pro', // For logical consistency checking
-  FALLBACK: 'gemini-1.5-flash' // Faster fallback if Pro fails
+  FALLBACK: 'gemini-2.0-flash-exp' // Latest and faster fallback model
 };
 
 // Enhanced generation configs
@@ -256,28 +308,16 @@ Provide ONLY the JSON response:`;
 const transcribeAudio = async (audioPath) => {
   console.log(`🎤 Transcribing audio: ${audioPath}`);
   
+  // Log API key info for debugging
+  console.log('🔑 [transcribeAudio] API Key Debug:');
+  console.log('🔑 [transcribeAudio] GEMINI_API_KEY exists:', !!process.env.GEMINI_API_KEY);
+  console.log('🔑 [transcribeAudio] API Key length:', process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.length : 'undefined');
+  console.log('🔑 [transcribeAudio] API Key preview:', process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.substring(0, 15) + '...' + process.env.GEMINI_API_KEY.substring(process.env.GEMINI_API_KEY.length - 15) : 'undefined');
+  
   try {
-    // Try with Pro model first, fallback to Flash if needed
-    let model;
-    let modelName;
-    
-    try {
-      model = genAI.getGenerativeModel({ 
-        model: MODELS.TRANSCRIPTION,
-        generationConfig: GENERATION_CONFIGS.HIGH_ACCURACY
-      });
-      modelName = MODELS.TRANSCRIPTION;
-    } catch (error) {
-      console.log(`⚠️ Fallback to ${MODELS.FALLBACK} model`);
-      model = genAI.getGenerativeModel({ 
-        model: MODELS.FALLBACK,
-        generationConfig: GENERATION_CONFIGS.HIGH_ACCURACY
-      });
-      modelName = MODELS.FALLBACK;
-    }
-    
     // Read audio file as buffer
     const audioBuffer = await fs.readFile(audioPath);
+    console.log(`📊 [transcribeAudio] Audio buffer size: ${audioBuffer.length} bytes`);
     
     const prompt = `You are a professional transcriptionist with expertise in accurate speech-to-text conversion. Your task is to transcribe this audio file with the highest possible accuracy.
 
@@ -295,18 +335,22 @@ CRITICAL: Return ONLY the transcription text. No prefixes, explanations, or addi
 
 Audio file to transcribe:`;
     
-    const result = await model.generateContent([
-      prompt,
-      {
-        inlineData: {
-          data: audioBuffer.toString('base64'),
-          mimeType: 'audio/mp3'
-        }
+    const additionalContent = [{
+      inlineData: {
+        data: audioBuffer.toString('base64'),
+        mimeType: 'audio/mp3'
       }
-    ]);
+    }];
+    
+    const { result, modelUsed } = await makeGeminiAPICall(
+      MODELS.TRANSCRIPTION,
+      GENERATION_CONFIGS.HIGH_ACCURACY,
+      prompt,
+      additionalContent
+    );
     
     const transcription = result.response.text().trim();
-    console.log(`✅ Audio transcribed using ${modelName} (${transcription.length} chars): ${transcription.substring(0, 100)}${transcription.length > 100 ? '...' : ''}`);
+    console.log(`✅ Audio transcribed using ${modelUsed} (${transcription.length} chars): ${transcription.substring(0, 100)}${transcription.length > 100 ? '...' : ''}`);
     
     // Basic validation
     if (transcription.length < 3) {
@@ -316,6 +360,26 @@ Audio file to transcribe:`;
     return transcription;
   } catch (error) {
     console.error('❌ Error transcribing audio:', error);
+    
+    // Additional debugging for API key issues
+    if (error.message && error.message.includes('quota')) {
+      console.log('🔍 [ERROR DEBUG] Quota exceeded error detected');
+      console.log('🔑 [ERROR DEBUG] Current GEMINI_API_KEY:', process.env.GEMINI_API_KEY ? 'EXISTS' : 'MISSING');
+      console.log('🔑 [ERROR DEBUG] API Key length:', process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.length : 'N/A');
+      console.log('🔑 [ERROR DEBUG] API Key starts with:', process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.substring(0, 20) : 'N/A');
+      console.log('🔑 [ERROR DEBUG] API Key ends with:', process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.substring(process.env.GEMINI_API_KEY.length - 20) : 'N/A');
+      
+      // Test a simple API call to verify the key
+      try {
+        console.log('🧪 [ERROR DEBUG] Testing API key with simple call...');
+        const testModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+        const testResult = await testModel.generateContent('Test');
+        console.log('✅ [ERROR DEBUG] API key test successful with 2.0 Flash');
+      } catch (testError) {
+        console.log('❌ [ERROR DEBUG] API key test failed:', testError.message);
+      }
+    }
+    
     throw error;
   }
 };
@@ -830,37 +894,37 @@ const searchFactChecks = async (claim, videoUrl = '', caption = '') => {
   while (searchStrategy < timelineStrategies.length && allResults.length === 0) {
     const strategy = timelineStrategies[searchStrategy];
     console.log(`📅 Searching ${strategy.description}...`);
-    
-    for (const query of uniqueQueries) {
-      try {
-        const params = {
-          query: query.trim(),
-          languageCode: 'en',
-          pageSize: 10,
-          offset: 0,
-          key: process.env.GOOGLE_FACTCHECK_API_KEY
-        };
-        
+  
+  for (const query of uniqueQueries) {
+    try {
+      const params = {
+        query: query.trim(),
+        languageCode: 'en',
+        pageSize: 10,
+        offset: 0,
+        key: process.env.GOOGLE_FACTCHECK_API_KEY
+      };
+      
         // Only add maxAgeDays if specified (omit for "all time" search)
         if (strategy.maxAgeDays) {
           params.maxAgeDays = strategy.maxAgeDays;
         }
         
         console.log(`🔎 Searching with query: "${query}" (${strategy.description})`);
-        const response = await axios.get(baseUrl, { params });
-        
-        if (response.data.claims && response.data.claims.length > 0) {
-          allResults = allResults.concat(response.data.claims);
-          console.log(`  ✅ Found ${response.data.claims.length} results`);
-        }
-        
-        // Add delay to respect rate limits
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-      } catch (error) {
-        console.log(`  ⚠️ Query "${query}" (${strategy.description}) failed:`, error.message);
-        continue; // Try next query
+      const response = await axios.get(baseUrl, { params });
+      
+      if (response.data.claims && response.data.claims.length > 0) {
+        allResults = allResults.concat(response.data.claims);
+        console.log(`  ✅ Found ${response.data.claims.length} results`);
       }
+      
+      // Add delay to respect rate limits
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+    } catch (error) {
+        console.log(`  ⚠️ Query "${query}" (${strategy.description}) failed:`, error.message);
+      continue; // Try next query
+    }
     }
     
     // If we found results, break out of the timeline loop

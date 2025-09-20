@@ -10,7 +10,8 @@
     "test": "node test-factcheck.js",
     "test:env": "node test-factcheck.js env",
     "test:api": "node test-factcheck.js api",
-    "test:claims": "node test-factcheck.js claims"
+    "test:claims": "node test-factcheck.js claims",
+    "test:gemini": "node test-gemini-key.js"
   },
   "keywords": [
     "instagram",

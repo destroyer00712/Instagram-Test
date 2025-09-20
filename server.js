@@ -4,6 +4,16 @@ const crypto = require('crypto');
 const axios = require('axios');
 require('dotenv').config();
 
+// Debug environment variables on startup
+console.log('🔧 Environment Variables Debug:');
+console.log('🔧 NODE_ENV:', process.env.NODE_ENV);
+console.log('🔧 PORT:', process.env.PORT);
+console.log('🔧 GEMINI_API_KEY exists:', !!process.env.GEMINI_API_KEY);
+console.log('🔧 GEMINI_API_KEY length:', process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.length : 'undefined');
+console.log('🔧 GEMINI_API_KEY preview:', process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.substring(0, 15) + '...' + process.env.GEMINI_API_KEY.substring(process.env.GEMINI_API_KEY.length - 15) : 'undefined');
+console.log('🔧 GOOGLE_FACTCHECK_API_KEY exists:', !!process.env.GOOGLE_FACTCHECK_API_KEY);
+console.log('🔧 INSTAGRAM_ACCESS_TOKEN exists:', !!process.env.INSTAGRAM_ACCESS_TOKEN);
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
