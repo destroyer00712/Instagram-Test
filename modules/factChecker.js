@@ -669,7 +669,572 @@ const detectActualEventAge = (allPosts, now) => {
 };
 
 /**
- * Search Reddit to determine claim age based on when discussions started
+ * Use Google Custom Search API to determine claim age from actual news articles
+ */
+const searchGoogleForClaimAge = async (claim, videoUrl = '', caption = '', transcription = '') => {
+  console.log(`🔍 Using Google Custom Search to find news articles about: ${claim.substring(0, 50)}...`);
+  
+  // Check cache first
+  const cacheKey = `google_age_${claim.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+  if (redditSearchCache.has(cacheKey)) {
+    console.log('📋 Using cached Google age results');
+    return redditSearchCache.get(cacheKey);
+  }
+  
+  try {
+    // Create comprehensive search queries from all available context
+    const searchQueries = await createSmartSearchQueries(claim, caption, transcription);
+    console.log(`🎯 Created ${searchQueries.length} targeted search queries`);
+    
+    let allArticles = [];
+    
+    // Search with multiple queries to get comprehensive results
+    for (const query of searchQueries.slice(0, 3)) { // Limit to top 3 queries
+      try {
+        console.log(`🔍 Searching Google for: "${query.query}"`);
+        
+        const searchUrl = 'https://www.googleapis.com/customsearch/v1';
+        const params = {
+          key: process.env.GOOGLE_CUSTOM_SEARCH_API_KEY,
+          cx: process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID,
+          q: query.query,
+          num: 10,
+          dateRestrict: 'm6', // Last 6 months to catch recent events
+          sort: 'date', // Sort by date to get chronological results
+          tbm: 'nws' // News search specifically
+        };
+        
+        const response = await axios.get(searchUrl, { params, timeout: 10000 });
+        
+        if (response.data?.items) {
+          const articles = [];
+          
+          // Process each article and scrape content for date analysis
+          for (const item of response.data.items.slice(0, 5)) { // Limit to 5 articles per query for performance
+            if (!item.snippet || !item.link) continue;
+            
+            try {
+              console.log(`    🔍 Analyzing: ${item.title?.substring(0, 40)}...`);
+              
+              // Scrape article content
+              const articleContent = await scrapeArticleContent(item.link);
+              
+              if (articleContent && articleContent.length > 100) {
+                // STEP 1: First get claim verification from content
+                const claimAnalysis = await analyzeArticleContentForClaim(
+                  claim,
+                  articleContent,
+                  item.title,
+                  item.snippet
+                );
+                
+                // STEP 2: Only if claim analysis is successful, extract event dates
+                const dateAnalysis = await extractEventDatesFromContent(
+                  claim, 
+                  articleContent, 
+                  item.title, 
+                  item.snippet
+                );
+                
+                console.log(`      🎯 Claim analysis: ${claimAnalysis.verdict} (${claimAnalysis.confidence})`);
+                
+                if (dateAnalysis.eventDate) {
+                  const ageInDays = Math.floor((Date.now() - dateAnalysis.eventDate.getTime()) / (1000 * 60 * 60 * 24));
+                  
+                  articles.push({
+                    title: item.title,
+                    snippet: item.snippet,
+                    link: item.link,
+                    source: extractDomainFromUrl(item.link),
+                    content: articleContent.substring(0, 1000), // First 1000 chars for analysis
+                    // Claim analysis results
+                    claimVerdict: claimAnalysis.verdict,
+                    claimConfidence: claimAnalysis.confidence,
+                    claimReasoning: claimAnalysis.reasoning,
+                    keyEvidence: claimAnalysis.keyEvidence,
+                    // Date analysis results
+                    eventDate: dateAnalysis.eventDate,
+                    eventDateConfidence: dateAnalysis.confidence,
+                    eventContext: dateAnalysis.context,
+                    ageInDays: ageInDays,
+                    queryType: query.type
+                  });
+                  
+                  console.log(`      ✅ Event date found: ${dateAnalysis.eventDate.toLocaleDateString()} (${ageInDays} days ago)`);
+                } else {
+                  // Still add article even without date if we have claim analysis
+                  if (claimAnalysis.verdict !== 'UNCLEAR') {
+                    articles.push({
+                      title: item.title,
+                      snippet: item.snippet,
+                      link: item.link,
+                      source: extractDomainFromUrl(item.link),
+                      content: articleContent.substring(0, 1000),
+                      // Claim analysis results
+                      claimVerdict: claimAnalysis.verdict,
+                      claimConfidence: claimAnalysis.confidence,
+                      claimReasoning: claimAnalysis.reasoning,
+                      keyEvidence: claimAnalysis.keyEvidence,
+                      // No date information
+                      eventDate: null,
+                      eventDateConfidence: 'low',
+                      eventContext: 'No event date found in content',
+                      ageInDays: null,
+                      queryType: query.type
+                    });
+                    console.log(`      📝 Added article with claim analysis but no date`);
+                  } else {
+                    console.log(`      ⚠️ No clear event date or claim verdict found in content`);
+                  }
+                }
+              } else {
+                console.log(`      ❌ Could not scrape content or content too short`);
+              }
+              
+              // Rate limiting between article scrapes
+              await new Promise(resolve => setTimeout(resolve, 500));
+              
+            } catch (error) {
+              console.log(`      ❌ Error processing article: ${error.message}`);
+              continue;
+            }
+          }
+          
+          console.log(`  ✅ Found ${articles.length} dated articles`);
+          if (articles.length > 0) {
+            const oldestArticle = Math.max(...articles.map(a => a.ageInDays));
+            const newestArticle = Math.min(...articles.map(a => a.ageInDays));
+            console.log(`  📅 Article age range: ${newestArticle}-${oldestArticle} days old`);
+            
+            // Show sample articles for debugging
+            articles.slice(0, 3).forEach((article, i) => {
+              console.log(`  ${i + 1}. ${article.source}: "${article.title.substring(0, 50)}..." (${article.ageInDays} days ago)`);
+            });
+          }
+          
+          allArticles = allArticles.concat(articles);
+        }
+        
+        // Rate limiting
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+      } catch (error) {
+        console.log(`  ⚠️ Google search error for "${query.query}": ${error.message}`);
+        continue;
+      }
+    }
+    
+    // Analyze article publication dates to determine event age
+    const eventAge = analyzeArticleTimeline(allArticles);
+    
+    const result = {
+      estimatedAgeDays: eventAge.ageDays,
+      confidence: eventAge.confidence,
+      method: 'google_news_content_analysis',
+      earliestArticleDate: eventAge.earliestDate,
+      latestArticleDate: eventAge.latestDate,
+      totalArticles: allArticles.length,
+      searchQueries: searchQueries.map(q => q.query),
+      articlesWithContent: allArticles, // Store full articles with content for fact-check analysis
+      sampleArticles: allArticles.slice(0, 5).map(a => ({
+        title: a.title.substring(0, 60) + '...',
+        source: a.source,
+        ageInDays: a.ageInDays,
+        eventDate: a.eventDate ? a.eventDate.toLocaleDateString() : null,
+        eventDateConfidence: a.eventDateConfidence,
+        eventContext: a.eventContext
+      })),
+      timeline: eventAge.timeline,
+      articlesAnalyzed: eventAge.articlesAnalyzed
+    };
+    
+    // Cache results for 4 hours
+    redditSearchCache.set(cacheKey, result);
+    setTimeout(() => redditSearchCache.delete(cacheKey), 14400000);
+    
+    if (eventAge.ageDays !== null) {
+      console.log(`📊 Google age analysis: ${eventAge.ageDays} days old (${eventAge.confidence} confidence)`);
+      console.log(`📅 Based on ${allArticles.length} news articles from ${eventAge.sourceCount} sources`);
+    } else {
+      console.log(`⚠️ Could not determine age from ${allArticles.length} articles found`);
+    }
+    
+    return result;
+    
+  } catch (error) {
+    console.error('❌ Error in Google age analysis:', error);
+    return {
+      estimatedAgeDays: null,
+      confidence: 'low',
+      method: 'google_search_failed',
+      error: error.message,
+      totalArticles: 0,
+      searchQueries: []
+    };
+  }
+};
+
+/**
+ * Create smart search queries from video context
+ */
+const createSmartSearchQueries = async (claim, caption = '', transcription = '') => {
+  console.log(`🧠 Creating smart search queries from video context...`);
+  
+  try {
+    const contextPrompt = `You are an expert at creating Google search queries to find news articles about specific events. Create 3 targeted search queries to find when this event actually occurred.
+
+CLAIM: "${claim}"
+CAPTION: "${caption || 'Not provided'}"
+TRANSCRIPTION: "${transcription ? transcription.substring(0, 200) + '...' : 'Not provided'}"
+
+TASK: Create search queries that will find actual news articles about when this event happened.
+
+REQUIREMENTS:
+1. Use specific names, locations, dates mentioned
+2. Include news-related terms like "breaking", "reported", "news"  
+3. Vary the approach (formal news terms, casual terms, alternate phrasings)
+4. Focus on findable, factual elements
+5. Each query should be 5-15 words
+
+OUTPUT FORMAT:
+[
+  {"query": "exact search query here", "type": "primary"},
+  {"query": "alternate phrasing here", "type": "secondary"}, 
+  {"query": "broader context search", "type": "context"}
+]
+
+Create targeted queries that news outlets would have used when reporting this event:`;
+
+    const { result } = await makeGeminiAPICall(
+      MODELS.CLAIM_ANALYSIS,
+      GENERATION_CONFIGS.BALANCED,
+      contextPrompt
+    );
+    
+    const response = result.response.text().trim();
+    
+    try {
+      const queries = JSON.parse(response);
+      if (Array.isArray(queries) && queries.length > 0) {
+        console.log(`✅ Created ${queries.length} AI-generated search queries`);
+        return queries;
+      }
+    } catch (parseError) {
+      console.log(`⚠️ AI query generation failed, using fallback queries`);
+    }
+    
+  } catch (error) {
+    console.log(`⚠️ AI query generation error: ${error.message}`);
+  }
+  
+  // Fallback: Create basic queries from claim
+  const fallbackQueries = [
+    { query: claim, type: 'primary' },
+    { query: `${claim} news report`, type: 'secondary' },
+    { query: `breaking news ${claim}`, type: 'context' }
+  ];
+  
+  console.log(`📝 Using ${fallbackQueries.length} fallback search queries`);
+  return fallbackQueries;
+};
+
+/**
+ * Analyze article content to determine claim verdict (STEP 1: Truth before dates)
+ */
+const analyzeArticleContentForClaim = async (claim, articleContent, title, snippet) => {
+  try {
+    const claimAnalysisPrompt = `You are an expert fact-checker analyzing a news article to verify a specific claim. Read the article content carefully and determine if the claim is supported, contradicted, or unclear based on the evidence presented.
+
+CLAIM: "${claim}"
+ARTICLE TITLE: "${title}"
+ARTICLE CONTENT: "${articleContent}"
+
+TASK: Determine if this article supports, contradicts, or provides unclear evidence for the claim.
+
+INSTRUCTIONS:
+1. Focus only on factual evidence in the article
+2. Ignore opinions, speculation, or unrelated information
+3. Look for direct statements, quotes, and verified facts
+4. Consider the source credibility and evidence quality
+5. Be conservative - if unclear, mark as "UNCLEAR"
+
+OUTPUT FORMAT (JSON):
+{
+  "verdict": "TRUE|FALSE|UNCLEAR",
+  "confidence": "high|medium|low",
+  "reasoning": "brief explanation of why you reached this verdict",
+  "keyEvidence": ["list", "of", "key", "supporting", "facts", "from", "article"]
+}
+
+REQUIREMENTS:
+- Only use "TRUE" if article clearly supports the claim
+- Only use "FALSE" if article clearly contradicts the claim
+- Use "UNCLEAR" if evidence is insufficient or conflicting
+- Use "high" confidence only with strong direct evidence
+- Provide clear reasoning and key evidence
+
+Analyze the article and determine the claim verdict:`;
+
+    const { result } = await makeGeminiAPICall(
+      MODELS.CLAIM_ANALYSIS,
+      GENERATION_CONFIGS.BALANCED,
+      claimAnalysisPrompt
+    );
+    
+    const response = result.response.text().trim();
+    
+    try {
+      // Clean up markdown-wrapped JSON responses
+      let cleanResponse = response;
+      if (response.includes('```json')) {
+        cleanResponse = response.replace(/```json\s*\n?/, '').replace(/\n?\s*```$/, '').trim();
+      } else if (response.includes('```')) {
+        cleanResponse = response.replace(/```\s*\n?/, '').replace(/\n?\s*```$/, '').trim();
+      }
+      
+      const analysis = JSON.parse(cleanResponse);
+      
+      return {
+        verdict: analysis.verdict || 'UNCLEAR',
+        confidence: analysis.confidence || 'low',
+        reasoning: analysis.reasoning || 'Unable to determine verdict from content',
+        keyEvidence: analysis.keyEvidence || []
+      };
+      
+    } catch (parseError) {
+      console.log(`      ⚠️ Claim analysis JSON parse error: ${parseError.message}`);
+    }
+    
+  } catch (error) {
+    console.log(`      ❌ Claim analysis AI error: ${error.message}`);
+  }
+  
+  return {
+    verdict: 'UNCLEAR',
+    confidence: 'low',
+    reasoning: 'Could not analyze claim from article content',
+    keyEvidence: []
+  };
+};
+
+/**
+ * Extract event dates from article content using AI analysis (STEP 2: After claim verification)
+ */
+const extractEventDatesFromContent = async (claim, articleContent, title, snippet) => {
+  try {
+    const dateExtractionPrompt = `You are an expert at analyzing news articles to find when specific events occurred. Analyze this article content to determine when the claimed event actually happened.
+
+CLAIM: "${claim}"
+ARTICLE TITLE: "${title}"
+ARTICLE CONTENT: "${articleContent}"
+
+TASK: Find the exact date when this event occurred based on the article content.
+
+INSTRUCTIONS:
+1. Look for specific dates, times, and temporal references
+2. Identify when the actual event happened (not when it was reported)
+3. Consider phrases like "on [date]", "yesterday", "last week", "this morning", etc.
+4. Distinguish between the event date and the reporting date
+5. If multiple dates are mentioned, identify the primary event date
+
+OUTPUT FORMAT (JSON):
+{
+  "eventDate": "YYYY-MM-DD", 
+  "confidence": "high|medium|low",
+  "context": "brief explanation of how date was determined",
+  "timeReferences": ["list", "of", "key", "temporal", "phrases", "found"]
+}
+
+REQUIREMENTS:
+- Only return eventDate if you are confident about the date
+- Use "high" confidence only if explicit date is mentioned
+- Use "medium" if date can be reasonably inferred
+- Use "low" or null if uncertain
+- Return null for eventDate if no clear date found
+
+Analyze the content and extract the event date:`;
+
+    const { result } = await makeGeminiAPICall(
+      MODELS.CLAIM_ANALYSIS,
+      GENERATION_CONFIGS.BALANCED,
+      dateExtractionPrompt
+    );
+    
+    const response = result.response.text().trim();
+    
+    try {
+      // Clean up markdown-wrapped JSON responses
+      let cleanResponse = response;
+      if (response.includes('```json')) {
+        cleanResponse = response.replace(/```json\s*\n?/, '').replace(/\n?\s*```$/, '').trim();
+      } else if (response.includes('```')) {
+        cleanResponse = response.replace(/```\s*\n?/, '').replace(/\n?\s*```$/, '').trim();
+      }
+      
+      const analysis = JSON.parse(cleanResponse);
+      
+      if (analysis.eventDate) {
+        const eventDate = new Date(analysis.eventDate);
+        
+        // Validate date is reasonable (not in future, not too old)
+        const now = new Date();
+        const oneYearAgo = new Date(now.getTime() - (365 * 24 * 60 * 60 * 1000));
+        
+        if (eventDate <= now && eventDate >= oneYearAgo) {
+          return {
+            eventDate: eventDate,
+            confidence: analysis.confidence || 'medium',
+            context: analysis.context || 'Date extracted from article content',
+            timeReferences: analysis.timeReferences || []
+          };
+        }
+      }
+    } catch (parseError) {
+      console.log(`      ⚠️ Date extraction JSON parse error: ${parseError.message}`);
+    }
+    
+  } catch (error) {
+    console.log(`      ❌ Date extraction AI error: ${error.message}`);
+  }
+  
+  return {
+    eventDate: null,
+    confidence: 'low',
+    context: 'Could not determine event date from content',
+    timeReferences: []
+  };
+};
+
+/**
+ * Extract publication date from Google search result (DEPRECATED - now using content analysis)
+ */
+const extractPublicationDate = (item) => {
+  // Try multiple date sources from Google search result
+  const dateSources = [
+    item.pagemap?.metatags?.[0]?.['article:published_time'],
+    item.pagemap?.metatags?.[0]?.['pubdate'],
+    item.pagemap?.metatags?.[0]?.['date'],
+    item.pagemap?.newsarticle?.[0]?.datepublished,
+    item.snippet.match(/(\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2}|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/)?.[0]
+  ];
+  
+  for (const dateStr of dateSources) {
+    if (dateStr) {
+      try {
+        const date = new Date(dateStr);
+        if (!isNaN(date.getTime()) && date.getTime() > 0) {
+          return date;
+        }
+      } catch (error) {
+        continue;
+      }
+    }
+  }
+  
+  return null;
+};
+
+/**
+ * Analyze article timeline to determine event age (Updated for content-based date extraction)
+ */
+const analyzeArticleTimeline = (articles) => {
+  if (articles.length === 0) {
+    return {
+      ageDays: null,
+      confidence: 'low',
+      earliestDate: null,
+      latestDate: null,
+      timeline: [],
+      sourceCount: 0,
+      articlesAnalyzed: []
+    };
+  }
+  
+  // Sort articles by event date (oldest first) and filter out articles without event dates
+  const sortedArticles = articles.filter(a => a.eventDate && a.ageInDays !== null)
+    .sort((a, b) => b.ageInDays - a.ageInDays);
+  
+  if (sortedArticles.length === 0) {
+    return {
+      ageDays: null,
+      confidence: 'low',
+      earliestDate: null,
+      latestDate: null,
+      timeline: [],
+      sourceCount: 0,
+      articlesAnalyzed: articles.map(a => ({
+        title: a.title?.substring(0, 60) + '...',
+        source: a.source,
+        reason: 'No event date found in content'
+      }))
+    };
+  }
+  
+  const oldestArticle = sortedArticles[0];
+  const newestArticle = sortedArticles[sortedArticles.length - 1];
+  const sourceCount = new Set(articles.map(a => a.source)).size;
+  
+  // Determine confidence based on article count, source diversity, and date confidence
+  let confidence = 'low';
+  const highConfidenceArticles = sortedArticles.filter(a => a.eventDateConfidence === 'high').length;
+  const mediumConfidenceArticles = sortedArticles.filter(a => a.eventDateConfidence === 'medium').length;
+  
+  if (highConfidenceArticles >= 2 && sourceCount >= 3) {
+    confidence = 'high';
+  } else if ((highConfidenceArticles >= 1 || mediumConfidenceArticles >= 2) && sourceCount >= 2) {
+    confidence = 'medium';
+  }
+  
+  // Group articles by event date for consensus analysis
+  const dailyArticleCounts = {};
+  sortedArticles.forEach(article => {
+    const dayKey = article.eventDate.toISOString().split('T')[0];
+    if (!dailyArticleCounts[dayKey]) {
+      dailyArticleCounts[dayKey] = { count: 0, confidenceSum: 0, articles: [] };
+    }
+    dailyArticleCounts[dayKey].count++;
+    dailyArticleCounts[dayKey].articles.push(article);
+    
+    // Add confidence score (high=3, medium=2, low=1)
+    const confScore = article.eventDateConfidence === 'high' ? 3 : 
+                     article.eventDateConfidence === 'medium' ? 2 : 1;
+    dailyArticleCounts[dayKey].confidenceSum += confScore;
+  });
+  
+  // Find the date with highest confidence score (weighted by count and confidence)
+  const timeline = Object.entries(dailyArticleCounts)
+    .map(([date, data]) => ({ 
+      date, 
+      count: data.count, 
+      confidenceScore: data.confidenceSum,
+      ageInDays: Math.floor((Date.now() - new Date(date).getTime()) / (1000 * 60 * 60 * 24)),
+      articles: data.articles.map(a => ({ source: a.source, confidence: a.eventDateConfidence }))
+    }))
+    .sort((a, b) => b.confidenceScore - a.confidenceScore);
+  
+  // Use the date with highest confidence score as the event age
+  const eventAge = timeline.length > 0 ? timeline[0].ageInDays : oldestArticle.ageInDays;
+  
+  return {
+    ageDays: eventAge,
+    confidence: confidence,
+    earliestDate: oldestArticle.eventDate.toISOString(),
+    latestDate: newestArticle.eventDate.toISOString(),
+    timeline: timeline,
+    sourceCount: sourceCount,
+    articlesAnalyzed: sortedArticles.map(a => ({
+      title: a.title?.substring(0, 60) + '...',
+      source: a.source,
+      eventDate: a.eventDate.toLocaleDateString(),
+      ageInDays: a.ageInDays,
+      confidence: a.eventDateConfidence,
+      context: a.eventContext
+    }))
+  };
+};
+
+/**
+ * Search Reddit to determine claim age based on when discussions started (DEPRECATED - keeping for fallback)
  */
 const searchRedditForClaimAge = async (claim) => {
   console.log(`📅 Searching Reddit to determine age of claim: ${claim.substring(0, 50)}...`);
@@ -1134,9 +1699,9 @@ const detectVideoAge = (videoUrl, caption = '') => {
 };
 
 /**
- * Search for fact-checks using Google Fact Check Tools API with Reddit-enhanced timeline strategy
+ * Search for fact-checks using Google Fact Check Tools API with Google Custom Search enhanced timeline strategy
  */
-const searchFactChecks = async (claim, videoUrl = '', caption = '') => {
+const searchFactChecks = async (claim, videoUrl = '', caption = '', transcription = '') => {
   console.log(`🔍 Searching fact-checks for: ${claim}`);
   
   const baseUrl = 'https://factchecktools.googleapis.com/v1alpha1/claims:search';
@@ -1151,11 +1716,11 @@ const searchFactChecks = async (claim, videoUrl = '', caption = '') => {
   // Remove duplicates
   const uniqueQueries = [...new Set(searchQueries)];
   
-  // NEW: Use Reddit to determine claim age for better search targeting
-  console.log(`🔍 Step 1: Analyzing Reddit discussions to determine claim age...`);
-  const redditAgeAnalysis = await searchRedditForClaimAge(claim);
+  // NEW: Use Google Custom Search to determine claim age from actual news articles
+  console.log(`🔍 Step 1: Using Google Search to determine claim age from news articles...`);
+  const googleAgeAnalysis = await searchGoogleForClaimAge(claim, videoUrl, caption, transcription);
   
-  // Enhanced timeline strategies based on Reddit age analysis
+  // Enhanced timeline strategies based on Google news age analysis
   let timelineStrategies = [
     { maxAgeDays: 30, description: "last 30 days" },
     { maxAgeDays: 90, description: "last 90 days" },
@@ -1164,37 +1729,37 @@ const searchFactChecks = async (claim, videoUrl = '', caption = '') => {
     { description: "all time" } // No maxAgeDays = search all time
   ];
   
-  // Optimize search strategy based on Reddit findings
+  // Optimize search strategy based on Google news findings
   let searchStrategy = 0;
-  if (redditAgeAnalysis.estimatedAgeDays && redditAgeAnalysis.confidence !== 'low') {
-    const redditAge = redditAgeAnalysis.estimatedAgeDays;
+  if (googleAgeAnalysis.estimatedAgeDays && googleAgeAnalysis.confidence !== 'low') {
+    const googleAge = googleAgeAnalysis.estimatedAgeDays;
     
-    console.log(`📊 Reddit analysis: Claim is ~${redditAge} days old (${redditAgeAnalysis.confidence} confidence)`);
-    console.log(`📅 Earliest Reddit mention: ${new Date(redditAgeAnalysis.earliestPostDate).toLocaleDateString()}`);
+    console.log(`📊 Google analysis: Claim is ~${googleAge} days old (${googleAgeAnalysis.confidence} confidence)`);
+    console.log(`📅 Based on ${googleAgeAnalysis.totalArticles} news articles from ${googleAgeAnalysis.timeline?.length || 0} different dates`);
     
-    // Create targeted search strategy based on Reddit age
-    if (redditAge <= 45) {
+    // Create targeted search strategy based on Google news age
+    if (googleAge <= 45) {
       // Recent claim - start with short timeframes
       timelineStrategies = [
-        { maxAgeDays: Math.max(60, redditAge + 15), description: `targeted: ${Math.max(60, redditAge + 15)} days (Reddit-based)` },
+        { maxAgeDays: Math.max(60, googleAge + 15), description: `targeted: ${Math.max(60, googleAge + 15)} days (Google-based)` },
         { maxAgeDays: 90, description: "last 90 days" },
         { maxAgeDays: 365, description: "last year" },
         { description: "all time" }
       ];
       searchStrategy = 0;
-    } else if (redditAge <= 180) {
+    } else if (googleAge <= 180) {
       // Medium-age claim
       timelineStrategies = [
-        { maxAgeDays: Math.max(200, redditAge + 20), description: `targeted: ${Math.max(200, redditAge + 20)} days (Reddit-based)` },
+        { maxAgeDays: Math.max(200, googleAge + 20), description: `targeted: ${Math.max(200, googleAge + 20)} days (Google-based)` },
         { maxAgeDays: 365, description: "last year" },
         { maxAgeDays: 1825, description: "last 5 years" },
         { description: "all time" }
       ];
       searchStrategy = 0;
-    } else if (redditAge <= 730) {
+    } else if (googleAge <= 730) {
       // Older claim - start with year+ searches
       timelineStrategies = [
-        { maxAgeDays: Math.max(800, redditAge + 70), description: `targeted: ${Math.max(800, redditAge + 70)} days (Reddit-based)` },
+        { maxAgeDays: Math.max(800, googleAge + 70), description: `targeted: ${Math.max(800, googleAge + 70)} days (Google-based)` },
         { maxAgeDays: 1825, description: "last 5 years" },
         { description: "all time" }
       ];
@@ -1203,15 +1768,15 @@ const searchFactChecks = async (claim, videoUrl = '', caption = '') => {
       // Very old claim - start with multi-year search
       searchStrategy = 1; // Start with "last 5 years"
       timelineStrategies.unshift({ 
-        maxAgeDays: Math.max(1900, redditAge + 100), 
-        description: `targeted: ${Math.max(1900, redditAge + 100)} days (Reddit-based)` 
+        maxAgeDays: Math.max(1900, googleAge + 100), 
+        description: `targeted: ${Math.max(1900, googleAge + 100)} days (Google-based)` 
       });
     }
     
-    console.log(`🎯 Optimized search strategy based on Reddit age: starting with ${timelineStrategies[searchStrategy].description}`);
+    console.log(`🎯 Optimized search strategy based on Google news age: starting with ${timelineStrategies[searchStrategy].description}`);
     
   } else {
-    console.log(`⚠️ Reddit age analysis inconclusive (${redditAgeAnalysis.totalPosts} posts), using fallback video detection`);
+    console.log(`⚠️ Google age analysis inconclusive (${googleAgeAnalysis.totalArticles} articles), using fallback video detection`);
     
     // Fallback to original video age detection
     const ageDetection = detectVideoAge(videoUrl, caption);
@@ -1222,7 +1787,7 @@ const searchFactChecks = async (claim, videoUrl = '', caption = '') => {
   
   // Store fallback age detection for return value
   let fallbackAgeDetection = null;
-  if (!redditAgeAnalysis.estimatedAgeDays || redditAgeAnalysis.confidence === 'low') {
+  if (!googleAgeAnalysis.estimatedAgeDays || googleAgeAnalysis.confidence === 'low') {
     fallbackAgeDetection = detectVideoAge(videoUrl, caption);
   }
   
@@ -1300,7 +1865,7 @@ const searchFactChecks = async (claim, videoUrl = '', caption = '') => {
     searchStrategy: searchStrategy < timelineStrategies.length ? timelineStrategies[searchStrategy] : { description: "all strategies exhausted" },
     totalStrategiesTried: searchStrategy + 1,
     estimatedVideoAge: fallbackAgeDetection?.estimatedAge || null, // Fallback age detection
-    redditAgeAnalysis: redditAgeAnalysis // NEW: Include Reddit age analysis
+    googleAgeAnalysis: googleAgeAnalysis // NEW: Include Google news age analysis
   };
 };
 
@@ -1388,8 +1953,20 @@ const extractTextFromHTML = (html, url, title = '') => {
   try {
     const $ = cheerio.load(html);
     
-    // Remove unwanted elements
-    $('script, style, nav, header, footer, .advertisement, .ad, .social-share, .comments, .sidebar, .related-articles').remove();
+    // AGGRESSIVE CLEANUP: Remove all noise elements first
+    $(
+      'script, style, noscript, iframe, embed, object, ' +
+      'nav, header, footer, aside, menu, ' +
+      '.advertisement, .ads, .ad, .social-share, .comments, .comment, ' +
+      '.sidebar, .nav, .navigation, .breadcrumb, .related, .recommendation, .related-articles, ' +
+      '.popup, .modal, .overlay, .banner, .cookie, ' +
+      '[class*="ad-"], [class*="ads-"], [id*="ad-"], [id*="ads-"], ' +
+      '[class*="social"], [class*="share"], [class*="follow"], ' +
+      '[class*="newsletter"], [class*="subscribe"], [class*="signup"], ' +
+      'button, input, select, textarea, form, ' +
+      '.gallery, .video, .audio, .player, ' +
+      '[style*="display: none"], [style*="visibility: hidden"]'
+    ).remove();
     
     // Enhanced content selectors for various news sites
     const contentSelectors = [
@@ -1462,10 +2039,27 @@ const extractTextFromHTML = (html, url, title = '') => {
       content = $('body').text().trim();
     }
     
-    // Clean up whitespace and normalize
+    // ADVANCED CONTENT CLEANING
     content = content
+      // Remove multiple whitespaces
       .replace(/\s+/g, ' ')
+      // Remove newlines
       .replace(/\n+/g, ' ')
+      // Remove common noise patterns
+      .replace(/Subscribe to our newsletter.*?$/gi, '')
+      .replace(/Follow us on.*?$/gi, '')
+      .replace(/Share this article.*?$/gi, '')
+      .replace(/Advertisement.*?$/gi, '')
+      .replace(/Cookie policy.*?$/gi, '')
+      .replace(/Privacy policy.*?$/gi, '')
+      .replace(/Terms of service.*?$/gi, '')
+      .replace(/Sign up for.*?$/gi, '')
+      .replace(/Download our app.*?$/gi, '')
+      // Remove navigation text
+      .replace(/Home\s+News\s+Sports\s+/gi, '')
+      .replace(/Menu\s+Search\s+/gi, '')
+      // Remove repetitive elements
+      .replace(/(\b\w+\b)(\s+\1\b){2,}/gi, '$1') // Remove word repetition
       .trim();
     
     // If content is still poor quality but we have a title, enhance it
@@ -1615,6 +2209,15 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
   // Check if we have fact-check articles
   const hasFactCheckArticles = factCheckResults.claims && factCheckResults.claims.length > 0;
   
+  // NEW: Check if we have Google search articles with content
+  const hasGoogleArticles = factCheckResults.googleAgeAnalysis && 
+                            factCheckResults.googleAgeAnalysis.articlesWithContent && 
+                            factCheckResults.googleAgeAnalysis.articlesWithContent.length > 0;
+  
+  if (hasGoogleArticles) {
+    console.log(`📰 Found ${factCheckResults.googleAgeAnalysis.articlesWithContent.length} Google search articles with content for equal weight analysis`);
+  }
+  
   // Reddit analysis for informational purposes, but gets 0 weight if articles are present
   let redditAnalysis = null;
   try {
@@ -1624,8 +2227,8 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
       redditAnalysis = await analyzeRedditSentiment(redditResults, originalClaim);
       console.log(`📊 Reddit sentiment: ${redditAnalysis.sentiment} (${(redditAnalysis.confidence * 100).toFixed(0)}% confidence)`);
       
-      // If no fact-check articles, Reddit can still provide fallback verdict
-      if (!hasFactCheckArticles) {
+      // If no fact-check articles and no Google articles, Reddit can still provide fallback verdict
+      if (!hasFactCheckArticles && !hasGoogleArticles) {
         console.log('📰 No fact-check articles found - using Reddit as primary source');
         
         let redditVerdict = 'Unknown';
@@ -1655,15 +2258,15 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
           source: 'reddit_fallback'
         };
       } else {
-        console.log('📰 Fact-check articles found - Reddit analysis will have 0 weight in final verdict');
+        console.log('📰 Articles found (fact-check or Google search) - Reddit analysis will have 0 weight in final verdict');
       }
     }
   } catch (error) {
     console.error('❌ Reddit analysis failed:', error);
   }
   
-  // If no fact-check articles and no Reddit results
-  if (!hasFactCheckArticles) {
+  // If no fact-check articles, no Google articles, and no Reddit results
+  if (!hasFactCheckArticles && !hasGoogleArticles) {
     return {
       verdict: 'Unknown',
       confidence: 'Low',
@@ -1676,10 +2279,10 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
     };
   }
   
-  const claims = factCheckResults.claims;
+  const claims = factCheckResults.claims || [];
   const allSources = [];
   
-  // Extract all sources with review dates
+  // Extract all fact-check sources with review dates
   claims.forEach(claim => {
     if (claim.claimReview && claim.claimReview.length > 0) {
       claim.claimReview.forEach(review => {
@@ -1690,12 +2293,36 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
             title: review.title || '',
             rating: review.textualRating,
             reviewDate: review.reviewDate || '1970-01-01',
-            publisherSite: review.publisher?.site || ''
+            publisherSite: review.publisher?.site || '',
+            sourceType: 'factcheck'
           });
         }
       });
     }
   });
+  
+  // NEW: Add Google search articles with EQUAL WEIGHT
+  if (hasGoogleArticles) {
+    const googleArticles = factCheckResults.googleAgeAnalysis.articlesWithContent;
+    console.log(`🔍 Adding ${googleArticles.length} Google search articles to analysis with equal weight...`);
+    
+    googleArticles.forEach(article => {
+      allSources.push({
+        publisher: article.source || 'Unknown',
+        url: article.link,
+        title: article.title || '',
+        rating: 'UNRATED', // Google articles don't have pre-existing ratings
+        reviewDate: article.eventDate ? article.eventDate.toISOString().split('T')[0] : '1970-01-01',
+        publisherSite: article.source || '',
+        sourceType: 'google_search',
+        content: article.content, // Pre-scraped content
+        eventDateConfidence: article.eventDateConfidence,
+        eventContext: article.eventContext
+      });
+    });
+    
+    console.log(`📰 Total sources for analysis: ${allSources.length} (${claims.length ? claims.reduce((sum, claim) => sum + (claim.claimReview?.length || 0), 0) : 0} fact-check + ${googleArticles.length} Google search)`);
+  }
   
   // Sort by date - LATEST FIRST (this is the key change!)
   allSources.sort((a, b) => {
@@ -1716,13 +2343,17 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
   const articlesToAnalyze = allSources.slice(0, 3);
   const analysisPromises = articlesToAnalyze.map(async (source, index) => {
     try {
-      console.log(`📰 Analyzing article ${index + 1}: ${source.publisher} (${source.reviewDate})`);
+      console.log(`📰 Analyzing article ${index + 1}: ${source.publisher} (${source.reviewDate}) - ${source.sourceType}`);
       
-      // Scrape the article content
-      const articleContent = await scrapeArticleContent(
-        source.url, 
-        source.title
-      );
+      // Use pre-scraped content for Google articles, or scrape for fact-check articles
+      let articleContent;
+      if (source.sourceType === 'google_search' && source.content) {
+        console.log(`  ✅ Using pre-scraped content from Google search`);
+        articleContent = source.content;
+      } else {
+        console.log(`  🔍 Scraping content for ${source.sourceType} article`);
+        articleContent = await scrapeArticleContent(source.url, source.title);
+      }
       
       if (articleContent) {
         // Get AI's independent analysis of the article
@@ -1779,11 +2410,17 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
   let falseScore = 0, trueScore = 0, mixedScore = 0, totalWeight = 0;
   const analysisData = [];
   
-  console.log(`🎯 NEW WEIGHTING STRATEGY: Article content analysis prioritized over traditional verdicts`);
+  console.log(`🎯 NEW WEIGHTING STRATEGY: Article content analysis prioritized, Google articles get EQUAL weight`);
   
   allSources.forEach((source, index) => {
     const publisherName = (source.publisher || 'Unknown').toLowerCase();
     let baseWeight = publisherWeights[publisherName] || 0.5;
+    
+    // EQUAL WEIGHT for Google articles: Give them same credibility as established sources
+    if (source.sourceType === 'google_search') {
+      baseWeight = 0.8; // High base weight for Google search articles
+      console.log(`🔍 Google search article gets equal weight: ${source.publisher} (base weight: ${baseWeight})`);
+    }
     
     // LATEST ARTICLE WEIGHTING - exponentially higher weight for recent articles
     let recencyMultiplier = 1.0;
@@ -1826,22 +2463,32 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
       console.log(`🤖 Article ${index + 1} (${source.publisher}): Using AI content analysis - ${normalizedRating} (${confidence}) [${verdictSource}]`);
       
     } else {
-      // Fallback to traditional rating analysis with reduced weight when no article content analysis
+      // Fallback to traditional rating analysis when no article content analysis
       const rating = source.rating.toLowerCase();
-      confidence = 0.4; // Reduced base confidence for traditional ratings
       
-      if (rating.includes('false') || rating.includes('incorrect') || rating.includes('misleading') || 
-          rating.includes('pants on fire') || rating.includes('fake') || rating.includes('fabricated')) {
-        normalizedRating = 'false';
-      } else if (rating.includes('true') || rating.includes('correct') || rating.includes('accurate') || 
-                 rating.includes('verified') || rating.includes('confirmed')) {
-        normalizedRating = 'true';
-      } else if (rating.includes('partially') || rating.includes('mixed') || rating.includes('half') || 
-                 rating.includes('mostly') || rating.includes('some')) {
-        normalizedRating = 'mixed';
+      // Special handling for Google articles without AI analysis
+      if (source.sourceType === 'google_search' && rating === 'unrated') {
+        normalizedRating = 'unknown';
+        confidence = 0.2; // Low confidence for Google articles without AI analysis
+        verdictSource = 'google_no_ai_analysis';
+        console.log(`🔍 Article ${index + 1} (${source.publisher}): Google search article without AI analysis - skipping [${verdictSource}]`);
+      } else {
+        // Traditional fact-check ratings
+        confidence = 0.4; // Reduced base confidence for traditional ratings
+        
+        if (rating.includes('false') || rating.includes('incorrect') || rating.includes('misleading') || 
+            rating.includes('pants on fire') || rating.includes('fake') || rating.includes('fabricated')) {
+          normalizedRating = 'false';
+        } else if (rating.includes('true') || rating.includes('correct') || rating.includes('accurate') || 
+                   rating.includes('verified') || rating.includes('confirmed')) {
+          normalizedRating = 'true';
+        } else if (rating.includes('partially') || rating.includes('mixed') || rating.includes('half') || 
+                   rating.includes('mostly') || rating.includes('some')) {
+          normalizedRating = 'mixed';
+        }
+        
+        console.log(`📰 Article ${index + 1} (${source.publisher}): Using traditional rating - ${normalizedRating} (${confidence}) [${verdictSource}]`);
       }
-      
-      console.log(`📰 Article ${index + 1} (${source.publisher}): Using traditional rating - ${normalizedRating} (${confidence}) [fallback]`);
     }
     
     // Apply logical consistency adjustment only to latest article with AI analysis
@@ -2073,16 +2720,19 @@ const generateContentPrioritizedSummary = (verdict, confidence, sourceCount, art
       summary += ` (tried ${factCheckResults.totalStrategiesTried} timeline strategies)`;
     }
     
-    // NEW: Include Reddit age analysis information
-    if (factCheckResults.redditAgeAnalysis) {
-      const reddit = factCheckResults.redditAgeAnalysis;
-      if (reddit.estimatedAgeDays && reddit.confidence !== 'low') {
-        summary += `\n📅 **Claim Age**: ~${reddit.estimatedAgeDays} days old (${reddit.confidence} confidence from Reddit analysis)`;
-        summary += `\n🗣️ **Reddit Timeline**: ${reddit.totalPosts} discussions found, earliest on ${new Date(reddit.earliestPostDate).toLocaleDateString()}`;
-      } else if (reddit.totalPosts > 0) {
-        summary += `\n🗣️ **Reddit Timeline**: Found ${reddit.totalPosts} discussions, but age analysis inconclusive`;
+    // NEW: Include Google age analysis information
+    if (factCheckResults.googleAgeAnalysis) {
+      const google = factCheckResults.googleAgeAnalysis;
+      if (google.estimatedAgeDays && google.confidence !== 'low') {
+        summary += `\n📅 **Claim Age**: ~${google.estimatedAgeDays} days old (${google.confidence} confidence from Google news analysis)`;
+        summary += `\n📰 **News Timeline**: ${google.totalArticles} articles found from ${google.timeline?.length || 1} different dates`;
+        if (google.sampleArticles && google.sampleArticles.length > 0) {
+          summary += `\n📋 **Key Sources**: ${google.sampleArticles.slice(0, 3).map(a => a.source).join(', ')}`;
+        }
+      } else if (google.totalArticles > 0) {
+        summary += `\n📰 **News Search**: Found ${google.totalArticles} articles, but age analysis inconclusive`;
       } else {
-        summary += `\n🔍 **Age Detection**: Used video metadata (Reddit search found no discussions)`;
+        summary += `\n🔍 **Age Detection**: Used video metadata (Google news search found no articles)`;
       }
     }
     
@@ -2545,8 +3195,8 @@ const processInstagramReel = async (senderId, attachment) => {
     }
     
     // Step 6: Search for fact-checks with timeline optimization
-    console.log(`🔍 [${reelProcessingId}] Starting enhanced fact-check search with Reddit age detection...`);
-    const factCheckResults = await searchFactChecks(claim, videoUrl, caption);
+    console.log(`🔍 [${reelProcessingId}] Starting enhanced fact-check search with Google age detection...`);
+    const factCheckResults = await searchFactChecks(claim, videoUrl, caption, transcription);
     
     // Step 7: Check logical consistency
     const logicalConsistency = await checkLogicalConsistency(claim, videoAnalysis, factCheckResults);
@@ -2610,6 +3260,12 @@ module.exports = {
   // NEW: Memory and conversational features
   searchFactCheckMemory,
   generateConversationalResponse,
-  // NEW: Reddit-based age detection
+  // NEW: Google Custom Search age detection (replaces Reddit)
+  searchGoogleForClaimAge,
+  createSmartSearchQueries,
+  analyzeArticleContentForClaim,
+  extractEventDatesFromContent,
+  analyzeArticleTimeline,
+  // DEPRECATED: Reddit-based age detection (kept for fallback)
   searchRedditForClaimAge
 };
