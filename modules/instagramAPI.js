@@ -3,6 +3,10 @@ const axios = require('axios');
 // Instagram Graph API base URL
 const BASE_URL = 'https://graph.instagram.com/v23.0';
 
+// Instagram message limits
+const MESSAGE_CHAR_LIMIT = 1000; // Instagram's character limit per message
+const MESSAGE_SPLIT_BUFFER = 50; // Leave buffer for clean splits
+
 /**
  * Generate cURL command for debugging
  */
@@ -45,16 +49,78 @@ const rateLimiter = {
 };
 
 /**
- * Send text message to Instagram user
+ * Split long message into Instagram-compliant chunks
  */
-const sendMessage = async (recipientId, messageText) => {
-  console.log(`📤 Sending message to ${recipientId}: ${messageText}`);
+const splitMessage = (message, maxLength = MESSAGE_CHAR_LIMIT - MESSAGE_SPLIT_BUFFER) => {
+  if (message.length <= maxLength) {
+    return [message];
+  }
+
+  const chunks = [];
+  let currentChunk = '';
   
+  // Split by sentences first (periods, exclamation marks, question marks)
+  const sentences = message.split(/([.!?]\s+)/);
+  
+  for (let i = 0; i < sentences.length; i++) {
+    const sentence = sentences[i];
+    
+    // If adding this sentence would exceed the limit, finalize current chunk
+    if (currentChunk.length + sentence.length > maxLength && currentChunk.trim()) {
+      chunks.push(currentChunk.trim());
+      currentChunk = sentence;
+    } else {
+      currentChunk += sentence;
+    }
+  }
+  
+  // Add the last chunk if it has content
+  if (currentChunk.trim()) {
+    chunks.push(currentChunk.trim());
+  }
+  
+  // If any chunk is still too long, split by words
+  const finalChunks = [];
+  for (const chunk of chunks) {
+    if (chunk.length <= maxLength) {
+      finalChunks.push(chunk);
+    } else {
+      // Split by words as fallback
+      const words = chunk.split(' ');
+      let wordChunk = '';
+      
+      for (const word of words) {
+        if (wordChunk.length + word.length + 1 > maxLength && wordChunk.trim()) {
+          finalChunks.push(wordChunk.trim());
+          wordChunk = word;
+        } else {
+          wordChunk += (wordChunk ? ' ' : '') + word;
+        }
+      }
+      
+      if (wordChunk.trim()) {
+        finalChunks.push(wordChunk.trim());
+      }
+    }
+  }
+  
+  return finalChunks.filter(chunk => chunk.length > 0);
+};
+
+/**
+ * Send single message (internal function)
+ */
+const sendSingleMessage = async (recipientId, messageText) => {
   // Check rate limit
   if (!rateLimiter.canMakeRequest()) {
     console.log('⚠️ Rate limit exceeded, queuing message');
     // In production, you might want to implement a proper queue
     throw new Error('Rate limit exceeded');
+  }
+  
+  // Validate message length
+  if (messageText.length > MESSAGE_CHAR_LIMIT) {
+    throw new Error(`Message too long: ${messageText.length} characters (max: ${MESSAGE_CHAR_LIMIT})`);
   }
   
   const url = `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/messages`;
@@ -72,15 +138,10 @@ const sendMessage = async (recipientId, messageText) => {
     }
   };
   
-  // Generate and log cURL command
-  const curlCommand = generateCurl('POST', url, headers, data);
-  console.log('🔧 Equivalent cURL command:');
-  console.log(curlCommand);
-  
   try {
     const response = await axios.post(url, data, { headers });
     
-    console.log('✅ Message sent successfully:', response.data);
+    console.log(`✅ Message sent (${messageText.length} chars):`, response.data);
     return response.data;
   } catch (error) {
     console.error('❌ Error sending message:', error.response?.data || error.message);
@@ -89,14 +150,68 @@ const sendMessage = async (recipientId, messageText) => {
 };
 
 /**
+ * Send text message to Instagram user (with automatic splitting if needed)
+ */
+const sendMessage = async (recipientId, messageText) => {
+  console.log(`📤 Preparing message for ${recipientId} (${messageText.length} chars)`);
+  
+  // Check if message needs splitting
+  if (messageText.length <= MESSAGE_CHAR_LIMIT) {
+    console.log(`📝 Single message (${messageText.length}/${MESSAGE_CHAR_LIMIT} chars)`);
+    return await sendSingleMessage(recipientId, messageText);
+  }
+  
+  // Split long message into chunks
+  console.log(`✂️ Message too long (${messageText.length} chars), splitting...`);
+  const chunks = splitMessage(messageText);
+  console.log(`📄 Split into ${chunks.length} messages`);
+  
+  const results = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const chunkNumber = i + 1;
+    
+    // Add part indicator for multi-part messages
+    let finalChunk = chunk;
+    if (chunks.length > 1) {
+      finalChunk = `📝 Part ${chunkNumber}/${chunks.length}:\n\n${chunk}`;
+    }
+    
+    console.log(`📤 Sending part ${chunkNumber}/${chunks.length} (${finalChunk.length} chars)`);
+    
+    try {
+      const result = await sendSingleMessage(recipientId, finalChunk);
+      results.push(result);
+      
+      // Add small delay between messages to avoid overwhelming the user
+      if (i < chunks.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+      }
+    } catch (error) {
+      console.error(`❌ Failed to send part ${chunkNumber}/${chunks.length}:`, error.message);
+      throw error;
+    }
+  }
+  
+  console.log(`✅ All ${chunks.length} message parts sent successfully`);
+  return results;
+};
+
+/**
  * Send quick reply message with buttons
  */
 const sendQuickReply = async (recipientId, messageText, quickReplies) => {
-  console.log(`📤 Sending quick reply to ${recipientId}`);
+  console.log(`📤 Sending quick reply to ${recipientId} (${messageText.length} chars)`);
   
   if (!rateLimiter.canMakeRequest()) {
     console.log('⚠️ Rate limit exceeded, queuing quick reply');
     throw new Error('Rate limit exceeded');
+  }
+  
+  // Validate message length for quick replies (they can't be split)
+  if (messageText.length > MESSAGE_CHAR_LIMIT) {
+    console.log(`⚠️ Quick reply message too long (${messageText.length} chars), truncating...`);
+    messageText = messageText.substring(0, MESSAGE_CHAR_LIMIT - 3) + '...';
   }
   
   const url = `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/messages`;
@@ -118,11 +233,6 @@ const sendQuickReply = async (recipientId, messageText, quickReplies) => {
       }))
     }
   };
-  
-  // Generate and log cURL command
-  const curlCommand = generateCurl('POST', url, headers, data);
-  console.log('🔧 Equivalent cURL command:');
-  console.log(curlCommand);
   
   try {
     const response = await axios.post(url, data, { headers });
@@ -220,7 +330,7 @@ const validateWebhookSignature = (payload, signature) => {
  * Get conversation history (if available)
  */
 const getConversationHistory = async (userId) => {
-  image.pngconsole.log(`📜 Getting conversation history for user ${userId}`);
+  console.log(`📜 Getting conversation history for user ${userId}`);
   
   if (!rateLimiter.canMakeRequest()) {
     console.log('⚠️ Rate limit exceeded, cannot get conversation history');
@@ -255,5 +365,7 @@ module.exports = {
   sendTypingIndicator,
   getUserProfile,
   validateWebhookSignature,
-  getConversationHistory
+  getConversationHistory,
+  splitMessage,
+  MESSAGE_CHAR_LIMIT
 }; 

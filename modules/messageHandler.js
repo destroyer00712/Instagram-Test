@@ -10,47 +10,53 @@ const botResponses = {
   factCheckProcessing: "🔍 Processing your reel for fact-checking... Please wait while I analyze the caption, video and audio content.",
   
   factCheckComplete: (claim, analysis, captionInfo = null) => {
-    const sourceText = analysis.sources && analysis.sources > 1 ? `${analysis.sources} sources` : "multiple sources";
     const verdictIcon = analysis.verdict === 'True' ? '✅' : analysis.verdict === 'False' ? '❌' : '⚠️';
     const confidenceIcon = analysis.confidence === 'High' ? '🎯' : analysis.confidence === 'Medium' ? '📊' : '🤔';
     
-    const verdictText = analysis.verdict === 'True' ? 'This appears to be true' : analysis.verdict === 'False' ? 'This appears to be false' : 'The evidence is mixed';
-    
-    // Add caption processing info if available
-    let captionNote = '';
-    if (captionInfo) {
-      if (captionInfo.isSignificant) {
-        captionNote = `\n📝 I found substantial factual content in the caption and prioritized it in my analysis.`;
-      } else {
-        captionNote = `\n🎵 The caption didn't contain significant factual claims, so I focused on the audio and video content.`;
-      }
-      
-      if (captionInfo.removed && captionInfo.removed.length > 0) {
-        captionNote += ` (Filtered out ${captionInfo.removed.length} hashtag${captionInfo.removed.length > 1 ? 's' : ''})`;
-      }
+    // Short, punchy verdict
+    let verdict = '';
+    if (analysis.verdict === 'True') {
+      verdict = '✅ TRUE - This checks out!';
+    } else if (analysis.verdict === 'False') {
+      verdict = '❌ FALSE - This claim is incorrect';
+    } else {
+      verdict = '⚠️ MIXED - Evidence goes both ways';
     }
     
-    return `${verdictIcon} ${verdictText}! I found this information across ${sourceText} including major news outlets and fact-checkers.
+    // Confidence level
+    const confidence = `${confidenceIcon} ${analysis.confidence} confidence`;
+    
+    // Source info (keep it brief)
+    const sourceCount = analysis.sources || 0;
+    const sourceText = sourceCount > 1 ? `${sourceCount} sources checked` : 'Multiple sources checked';
+    
+    // Caption processing note (if significant)
+    let captionNote = '';
+    if (captionInfo && captionInfo.isSignificant) {
+      captionNote = `\n📝 Analyzed caption + video content`;
+    } else if (captionInfo) {
+      captionNote = `\n🎵 Focused on video/audio content`;
+    }
+    
+    // Keep it under 300 characters for the main response
+    return `${verdict}
+${confidence} • ${sourceText}${captionNote}
 
-${analysis.verdict === 'True' ? '✅' : analysis.verdict === 'False' ? '❌' : '⚠️'} The sources generally ${analysis.verdict === 'True' ? 'confirm' : analysis.verdict === 'False' ? 'contradict' : 'have mixed views on'} this claim.
-
-${confidenceIcon} I'm ${analysis.confidence.toLowerCase()}ly confident in this assessment.${captionNote}
-
-💬 Want more details? Just ask "tell me more"!`;
+💬 Ask "tell me more" for details!`;
   },
   
   noClaimFound: (result = null) => {
-    let baseMessage = "🤔 I couldn't find any verifiable claims in this reel to fact-check. The content might be opinion-based or not contain specific factual statements.";
+    let message = "🤔 No factual claims found to fact-check.";
     
     if (result && result.captionInfo) {
       if (result.captionInfo.isSignificant) {
-        baseMessage += `\n\n📝 I analyzed the caption (${result.captionInfo.cleanedLength} chars after removing hashtags), along with the audio and video content.`;
+        message += `\n📝 Analyzed caption + video content`;
       } else {
-        baseMessage += `\n\n🎵 I analyzed the audio, video, and caption content. The caption was mostly promotional content.`;
+        message += `\n🎵 Analyzed video/audio (caption was mostly promotional)`;
       }
     }
     
-    return baseMessage;
+    return message + `\n\n💡 Try sharing a reel with news or factual claims!`;
   },
   
   factCheckError: "❌ Sorry, I encountered an error while fact-checking this video. Please try again later.",
@@ -228,7 +234,7 @@ const determineResponse = async (messageText, senderId) => {
     
     return {
       type: 'text',
-      text: "I'd love to explain more, but I need you to share a video or claim first so I can fact-check it for you! 🔍"
+      text: "Share a reel first so I can fact-check something for you! 🎬🔍"
     };
   }
 
@@ -253,7 +259,7 @@ const determineResponse = async (messageText, senderId) => {
   // Default fallback for fact-checking bot
   return {
     type: 'text',
-    text: "I'm a fact-checking bot! Share an Instagram reel and I'll analyze it for accuracy. You can also ask 'tell me more' about previous fact-checks. 🔍"
+    text: "🔍 I fact-check Instagram reels! Share one with news/claims and I'll verify it. You can also ask about previous checks!"
   };
 };
 

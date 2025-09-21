@@ -1110,25 +1110,27 @@ module.exports = {
     console.log(`🔍 Generating detailed explanation for: "${claim}"`);
     
     try {
-      const prompt = `You are a professional fact-checker explaining results to a curious person. Create a detailed, human-friendly explanation for this fact-check.
+      const prompt = `Create a SHORT, Instagram-friendly detailed explanation for this fact-check result.
 
 CLAIM: "${claim}"
 VERDICT: ${analysis.verdict} 
 CONFIDENCE: ${analysis.confidence}
-SUMMARY: ${analysis.summary || 'No summary available'}
 
-Create a conversational, informative response that:
-1. **Explains the verdict clearly** - why is it true/false/mixed?
-2. **Mentions key sources** - what kinds of sources confirmed/denied this?
-3. **Provides context** - background info that helps understand the claim
-4. **Uses conversational tone** - like explaining to a friend, not robotic
-5. **Addresses significance** - why does this matter?
+REQUIREMENTS:
+1. **KEEP IT SHORT** - Maximum 500 characters total
+2. **Explain WHY** - Brief reason for the verdict
+3. **Mention sources** - What type of sources were checked
+4. **Instagram tone** - Casual, friendly, emoji-friendly
+5. **No academic language** - Keep it conversational
 
-TONE: Friendly, informative, conversational - NOT robotic or formal
-LENGTH: 2-3 paragraphs maximum
-AVOID: "Based on analysis", "According to data", overly technical language
+EXAMPLES:
+❌ FALSE: "Multiple news outlets contradict this. Official government sources show different numbers. This appears to be misinformation spreading on social media."
 
-Generate a natural, engaging explanation:`;
+✅ TRUE: "Confirmed by major news outlets and official sources. The core facts check out, though some details may vary slightly."
+
+⚠️ MIXED: "Some parts are accurate but others are misleading. Different reliable sources give conflicting information."
+
+Generate a concise explanation (under 500 chars):`;
 
       const { result } = await makeGeminiAPICall(
         MODELS.CLAIM_ANALYSIS,
@@ -1147,12 +1149,17 @@ Generate a natural, engaging explanation:`;
     } catch (error) {
       console.error('❌ Error generating detailed explanation:', error);
       
-      // Fallback to simpler response
-      const fallback = `Here's what I found about "${claim}": ${analysis.verdict === 'True' ? 'This appears to be accurate' : analysis.verdict === 'False' ? 'This appears to be false' : 'The evidence is mixed'}. 
-
-${analysis.summary || 'I searched through multiple sources to verify this claim.'} The confidence level is ${analysis.confidence.toLowerCase()}.
-
-${analysis.verdict === 'True' ? 'Multiple reliable sources support this information.' : analysis.verdict === 'False' ? 'Authoritative sources contradict this claim.' : 'Different sources provide conflicting information about this.'}`;
+      // Concise fallback response for Instagram
+      let fallback = '';
+      if (analysis.verdict === 'True') {
+        fallback = '✅ Multiple reliable sources confirm this is accurate.';
+      } else if (analysis.verdict === 'False') {
+        fallback = '❌ Authoritative sources contradict this claim.';
+      } else {
+        fallback = '⚠️ Sources give mixed information on this topic.';
+      }
+      
+      fallback += ` ${analysis.confidence} confidence based on my search.`;
 
       return {
         found: true,
@@ -1162,11 +1169,11 @@ ${analysis.verdict === 'True' ? 'Multiple reliable sources support this informat
   },
   generateGeneralConversation: async (userId, message) => ({ 
     found: true, 
-    response: "I'm a fact-checking bot! Share an Instagram reel with claims and I'll verify them using comprehensive video/audio analysis and Google Custom Search. You can also ask me about previous fact-checks." 
+    response: "👋 I'm a fact-checking bot! Share a reel with news/claims and I'll verify it for you. You can also ask about previous fact-checks! 🔍" 
   }),
   generateConversationalResponse: async (userId, query, checks) => ({ 
     found: true, 
-    response: checks.length > 0 ? `I found ${checks.length} previous fact-checks. What specifically would you like to know?` : "I haven't fact-checked anything for you yet. Share a reel to get started!" 
+    response: checks.length > 0 ? `Found ${checks.length} previous fact-checks! What do you want to know? 🤔` : "No fact-checks yet. Share a reel to get started! 🚀" 
   }),
   searchFactCheckMemory: async (userId, query) => {
     const history = factCheckMemory.get(userId) || [];
