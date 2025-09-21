@@ -14,9 +14,7 @@ const botResponses = {
     const verdictIcon = analysis.verdict === 'True' ? '✅' : analysis.verdict === 'False' ? '❌' : '⚠️';
     const confidenceIcon = analysis.confidence === 'High' ? '🎯' : analysis.confidence === 'Medium' ? '📊' : '🤔';
     
-    return {
-      type: 'text',
-      text: `🔍 Found in ${sourceText}:
+    return `${verdictIcon} Found in ${sourceText}:
 1. www.reddit.com
 2. x.com
 3. www.facebook.com
@@ -25,8 +23,7 @@ const botResponses = {
 
 ${confidenceIcon} Confidence: ${analysis.confidence}
 
-💬 Ask "tell me more" for details!`
-    };
+💬 Ask "tell me more" for details!`;
   },
   
   noClaimFound: "🤔 I couldn't find any verifiable claims in this reel to fact-check. The content might be opinion-based or not contain specific factual statements.",
