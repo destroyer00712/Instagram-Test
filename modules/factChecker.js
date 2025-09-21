@@ -568,6 +568,298 @@ Now extract the PRIMARY verifiable claim:`;
 };
 
 /**
+ * Detect actual event age by analyzing post activity spikes
+ */
+const detectActualEventAge = (allPosts, now) => {
+  console.log(`🔍 Analyzing post timeline to detect actual event occurrence...`);
+  
+  if (allPosts.length < 5) {
+    return { eventAgeDays: null, confidence: 'low', method: 'insufficient_data' };
+  }
+  
+  // Group posts by day to find activity spikes
+  const dailyPostCounts = {};
+  allPosts.forEach(post => {
+    const postDate = new Date(post.created_utc * 1000);
+    const dayKey = postDate.toISOString().split('T')[0]; // YYYY-MM-DD
+    
+    if (!dailyPostCounts[dayKey]) {
+      dailyPostCounts[dayKey] = { count: 0, posts: [], avgScore: 0 };
+    }
+    
+    dailyPostCounts[dayKey].count++;
+    dailyPostCounts[dayKey].posts.push(post);
+  });
+  
+  // Calculate average scores for each day
+  Object.keys(dailyPostCounts).forEach(day => {
+    const dayData = dailyPostCounts[day];
+    const totalScore = dayData.posts.reduce((sum, post) => sum + (post.score || 0), 0);
+    dayData.avgScore = totalScore / dayData.count;
+  });
+  
+  // Convert to sorted array
+  const dailyActivity = Object.entries(dailyPostCounts)
+    .map(([date, data]) => ({
+      date: date,
+      timestamp: new Date(date).getTime() / 1000,
+      count: data.count,
+      avgScore: data.avgScore,
+      posts: data.posts
+    }))
+    .sort((a, b) => a.timestamp - b.timestamp);
+  
+  // Look for the major spike that indicates original event
+  let maxSpike = { count: 0, date: null, confidence: 'low' };
+  let baselineActivity = 0;
+  
+  if (dailyActivity.length >= 3) {
+    // Calculate baseline (average activity excluding the highest spike)
+    const sortedByCounts = [...dailyActivity].sort((a, b) => b.count - a.count);
+    baselineActivity = sortedByCounts.slice(1).reduce((sum, day) => sum + day.count, 0) / (sortedByCounts.length - 1);
+    
+    // Find the most significant spike
+    dailyActivity.forEach(day => {
+      // Spike significance = raw count + high scores + timeline position
+      let spikeScore = day.count;
+      
+      // Bonus for high-scoring posts (breaking news gets more upvotes)
+      if (day.avgScore > 100) spikeScore *= 1.5;
+      if (day.avgScore > 500) spikeScore *= 2.0;
+      
+      // Bonus for being earlier in timeline (original reporting)
+      const dayIndex = dailyActivity.indexOf(day);
+      const timelineBonus = (dailyActivity.length - dayIndex) / dailyActivity.length;
+      spikeScore *= (1 + timelineBonus * 0.5);
+      
+      if (spikeScore > maxSpike.count) {
+        maxSpike = {
+          count: spikeScore,
+          date: day.date,
+          originalCount: day.count,
+          avgScore: day.avgScore,
+          confidence: day.count > (baselineActivity * 2) ? 'high' : day.count > baselineActivity ? 'medium' : 'low'
+        };
+      }
+    });
+  }
+  
+  if (maxSpike.date) {
+    const eventTimestamp = new Date(maxSpike.date).getTime() / 1000;
+    const eventAgeDays = Math.floor((now - eventTimestamp) / 86400);
+    
+    console.log(`📊 Event spike detected: ${maxSpike.date} (${eventAgeDays} days ago)`);
+    console.log(`   📈 Spike activity: ${maxSpike.originalCount} posts (avg score: ${Math.round(maxSpike.avgScore)})`);
+    console.log(`   📊 Baseline activity: ${Math.round(baselineActivity)} posts/day`);
+    console.log(`   🎯 Confidence: ${maxSpike.confidence} (${maxSpike.originalCount}x above baseline: ${(maxSpike.originalCount / Math.max(baselineActivity, 1)).toFixed(1)}x)`);
+    
+    return {
+      eventAgeDays: eventAgeDays,
+      confidence: maxSpike.confidence,
+      method: 'spike_detection',
+      spikeDate: maxSpike.date,
+      spikeActivity: maxSpike.originalCount,
+      baselineActivity: Math.round(baselineActivity),
+      dailyBreakdown: dailyActivity.map(d => ({ date: d.date, count: d.count, avgScore: Math.round(d.avgScore) }))
+    };
+  }
+  
+  console.log(`⚠️ No clear event spike detected, using earliest post method`);
+  return { eventAgeDays: null, confidence: 'low', method: 'no_clear_spike' };
+};
+
+/**
+ * Search Reddit to determine claim age based on when discussions started
+ */
+const searchRedditForClaimAge = async (claim) => {
+  console.log(`📅 Searching Reddit to determine age of claim: ${claim.substring(0, 50)}...`);
+  
+  // Check cache first
+  const cacheKey = `reddit_age_${claim.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+  if (redditSearchCache.has(cacheKey)) {
+    console.log('📋 Using cached Reddit age results');
+    return redditSearchCache.get(cacheKey);
+  }
+  
+  try {
+    // Extract key terms from claim for better search
+    const searchTerms = claim
+      .replace(/[^\w\s]/g, ' ')
+      .split(' ')
+      .filter(word => word.length > 3 && !['this', 'that', 'with', 'from', 'they', 'were', 'been', 'have'].includes(word.toLowerCase()))
+      .slice(0, 5)
+      .join(' ');
+    
+    console.log(`🔎 Reddit age search terms: "${searchTerms}"`);
+    
+    // Search news-focused subreddits for timeline analysis
+    const newSubreddits = [
+      'news',
+      'worldnews', 
+      'politics',
+      'breakingnews',
+      'nottheonion',
+      'OutOfTheLoop'
+    ];
+    
+    let allPosts = [];
+    
+    // Try multiple search strategies to catch older posts
+    const searchStrategies = [
+      { sort: 'new', t: 'month', description: 'newest in past month' },
+      { sort: 'relevance', t: 'month', description: 'most relevant in past month' },
+      { sort: 'top', t: 'month', description: 'top posts in past month' }
+    ];
+    
+    for (const subreddit of newSubreddits.slice(0, 3)) { // Focus on 3 main subreddits
+      for (const strategy of searchStrategies) {
+        try {
+          const searchUrl = `https://www.reddit.com/r/${subreddit}/search.json`;
+          const params = {
+            q: searchTerms,
+            sort: strategy.sort,
+            limit: 50,
+            t: strategy.t
+          };
+          
+          console.log(`    🔍 Trying r/${subreddit} with ${strategy.description}...`);
+          
+          const response = await axios.get(searchUrl, {
+            params,
+            headers: {
+              'User-Agent': 'FactChecker/1.0 (Educational Research)'
+            },
+            timeout: 10000
+          });
+          
+          if (response.data?.data?.children) {
+            const posts = response.data.data.children
+              .map(child => child.data)
+              .filter(post => post.title && post.selftext !== '[removed]')
+              .map(post => {
+                const postAge = Math.floor((Date.now() / 1000 - post.created_utc) / 86400);
+                return {
+                  subreddit: post.subreddit,
+                  title: post.title,
+                  created_utc: post.created_utc,
+                  score: post.score,
+                  num_comments: post.num_comments,
+                  url: `https://reddit.com${post.permalink}`,
+                  ageInDays: postAge
+                };
+              });
+            
+            // Log date range of found posts
+            if (posts.length > 0) {
+              const oldestPost = Math.max(...posts.map(p => p.ageInDays));
+              const newestPost = Math.min(...posts.map(p => p.ageInDays));
+              console.log(`      📊 Found ${posts.length} posts (${newestPost}-${oldestPost} days old)`);
+              
+              // Log some sample dates for debugging
+              const samplePosts = posts.slice(0, 3);
+              samplePosts.forEach((post, i) => {
+                const postDate = new Date(post.created_utc * 1000).toLocaleDateString();
+                console.log(`      ${i + 1}. "${post.title.substring(0, 40)}..." (${postDate}, ${post.ageInDays} days ago)`);
+              });
+            }
+            
+            allPosts = allPosts.concat(posts);
+          }
+          
+          // Rate limiting between searches
+          await new Promise(resolve => setTimeout(resolve, 800));
+        
+        } catch (error) {
+          console.log(`    ⚠️ Error searching r/${subreddit} with ${strategy.description}:`, error.message);
+        }
+      }
+    }
+    
+    // Analyze post timestamps to determine ACTUAL EVENT AGE (not just discussion age)
+    if (allPosts.length === 0) {
+      console.log(`⚠️ No Reddit posts found for age analysis`);
+      return {
+        estimatedAgeDays: null,
+        confidence: 'low',
+        earliestPostDate: null,
+        totalPosts: 0,
+        searchTerms: searchTerms
+      };
+    }
+    
+    // Sort by creation time (oldest first)
+    allPosts.sort((a, b) => a.created_utc - b.created_utc);
+    
+    const now = Date.now() / 1000; // Convert to Unix timestamp
+    
+    // ENHANCED: Look for the original news spike, not just earliest post
+    const eventDetection = detectActualEventAge(allPosts, now);
+    
+    const earliestPost = allPosts[0];
+    const latestPost = allPosts[allPosts.length - 1];
+    
+    const earliestDate = new Date(earliestPost.created_utc * 1000);
+    const latestDate = new Date(latestPost.created_utc * 1000);
+    
+    // Use detected event age if available, otherwise fall back to earliest post
+    const ageInDays = eventDetection.eventAgeDays || Math.floor((now - earliestPost.created_utc) / 86400);
+    
+    // Determine confidence based on post distribution and volume
+    let confidence = 'low';
+    if (allPosts.length >= 5) {
+      // Check if posts are clustered around the same time period
+      const timeSpan = latestPost.created_utc - earliestPost.created_utc;
+      const timeSpanDays = timeSpan / 86400;
+      
+      if (timeSpanDays <= 30 && allPosts.length >= 10) {
+        confidence = 'high'; // Lots of posts in short timeframe
+      } else if (timeSpanDays <= 90 && allPosts.length >= 5) {
+        confidence = 'medium'; // Some posts in reasonable timeframe
+      }
+    }
+    
+    const result = {
+      estimatedAgeDays: ageInDays,
+      confidence: confidence,
+      earliestPostDate: earliestDate.toISOString(),
+      latestPostDate: latestDate.toISOString(),
+      totalPosts: allPosts.length,
+      searchTerms: searchTerms,
+      postTimespan: Math.floor((latestPost.created_utc - earliestPost.created_utc) / 86400),
+      samplePosts: allPosts.slice(0, 3).map(post => ({
+        title: post.title,
+        subreddit: post.subreddit,
+        date: new Date(post.created_utc * 1000).toLocaleDateString(),
+        score: post.score
+      })),
+      // NEW: Enhanced event detection information
+      eventDetection: eventDetection,
+      ageDetectionMethod: eventDetection.method || 'earliest_post'
+    };
+    
+    // Cache results for 2 hours
+    redditSearchCache.set(cacheKey, result);
+    setTimeout(() => redditSearchCache.delete(cacheKey), 7200000);
+    
+    console.log(`📊 Reddit age analysis: ${ageInDays} days old (${confidence} confidence, ${allPosts.length} posts)`);
+    console.log(`📅 Earliest mention: ${earliestDate.toLocaleDateString()}, Latest: ${latestDate.toLocaleDateString()}`);
+    
+    return result;
+    
+  } catch (error) {
+    console.error('❌ Error in Reddit age analysis:', error);
+    return {
+      estimatedAgeDays: null,
+      confidence: 'low',
+      earliestPostDate: null,
+      totalPosts: 0,
+      searchTerms: '',
+      error: error.message
+    };
+  }
+};
+
+/**
  * Search Reddit for news verification and public sentiment
  */
 const searchRedditForVerification = async (claim) => {
@@ -842,7 +1134,7 @@ const detectVideoAge = (videoUrl, caption = '') => {
 };
 
 /**
- * Search for fact-checks using Google Fact Check Tools API with progressive timeline strategy
+ * Search for fact-checks using Google Fact Check Tools API with Reddit-enhanced timeline strategy
  */
 const searchFactChecks = async (claim, videoUrl = '', caption = '') => {
   console.log(`🔍 Searching fact-checks for: ${claim}`);
@@ -859,8 +1151,12 @@ const searchFactChecks = async (claim, videoUrl = '', caption = '') => {
   // Remove duplicates
   const uniqueQueries = [...new Set(searchQueries)];
   
-  // Progressive timeline search strategy - start with recent, expand if needed
-  const timelineStrategies = [
+  // NEW: Use Reddit to determine claim age for better search targeting
+  console.log(`🔍 Step 1: Analyzing Reddit discussions to determine claim age...`);
+  const redditAgeAnalysis = await searchRedditForClaimAge(claim);
+  
+  // Enhanced timeline strategies based on Reddit age analysis
+  let timelineStrategies = [
     { maxAgeDays: 30, description: "last 30 days" },
     { maxAgeDays: 90, description: "last 90 days" },
     { maxAgeDays: 365, description: "last year" },
@@ -868,12 +1164,71 @@ const searchFactChecks = async (claim, videoUrl = '', caption = '') => {
     { description: "all time" } // No maxAgeDays = search all time
   ];
   
-  // Detect video age to optimize search strategy
-  const ageDetection = detectVideoAge(videoUrl, caption);
-  let allResults = [];
-  let searchStrategy = ageDetection.startStrategy;
+  // Optimize search strategy based on Reddit findings
+  let searchStrategy = 0;
+  if (redditAgeAnalysis.estimatedAgeDays && redditAgeAnalysis.confidence !== 'low') {
+    const redditAge = redditAgeAnalysis.estimatedAgeDays;
+    
+    console.log(`📊 Reddit analysis: Claim is ~${redditAge} days old (${redditAgeAnalysis.confidence} confidence)`);
+    console.log(`📅 Earliest Reddit mention: ${new Date(redditAgeAnalysis.earliestPostDate).toLocaleDateString()}`);
+    
+    // Create targeted search strategy based on Reddit age
+    if (redditAge <= 45) {
+      // Recent claim - start with short timeframes
+      timelineStrategies = [
+        { maxAgeDays: Math.max(60, redditAge + 15), description: `targeted: ${Math.max(60, redditAge + 15)} days (Reddit-based)` },
+        { maxAgeDays: 90, description: "last 90 days" },
+        { maxAgeDays: 365, description: "last year" },
+        { description: "all time" }
+      ];
+      searchStrategy = 0;
+    } else if (redditAge <= 180) {
+      // Medium-age claim
+      timelineStrategies = [
+        { maxAgeDays: Math.max(200, redditAge + 20), description: `targeted: ${Math.max(200, redditAge + 20)} days (Reddit-based)` },
+        { maxAgeDays: 365, description: "last year" },
+        { maxAgeDays: 1825, description: "last 5 years" },
+        { description: "all time" }
+      ];
+      searchStrategy = 0;
+    } else if (redditAge <= 730) {
+      // Older claim - start with year+ searches
+      timelineStrategies = [
+        { maxAgeDays: Math.max(800, redditAge + 70), description: `targeted: ${Math.max(800, redditAge + 70)} days (Reddit-based)` },
+        { maxAgeDays: 1825, description: "last 5 years" },
+        { description: "all time" }
+      ];
+      searchStrategy = 0;
+    } else {
+      // Very old claim - start with multi-year search
+      searchStrategy = 1; // Start with "last 5 years"
+      timelineStrategies.unshift({ 
+        maxAgeDays: Math.max(1900, redditAge + 100), 
+        description: `targeted: ${Math.max(1900, redditAge + 100)} days (Reddit-based)` 
+      });
+    }
+    
+    console.log(`🎯 Optimized search strategy based on Reddit age: starting with ${timelineStrategies[searchStrategy].description}`);
+    
+  } else {
+    console.log(`⚠️ Reddit age analysis inconclusive (${redditAgeAnalysis.totalPosts} posts), using fallback video detection`);
+    
+    // Fallback to original video age detection
+    const ageDetection = detectVideoAge(videoUrl, caption);
+    searchStrategy = ageDetection.startStrategy;
+    
+    console.log(`🎯 Using video-based strategy ${searchStrategy} as fallback`);
+  }
   
-  console.log(`🎯 Starting search from strategy ${searchStrategy} based on ${ageDetection.estimatedAge ? `estimated age: ${ageDetection.estimatedAge} days` : 'progressive approach'}`);
+  // Store fallback age detection for return value
+  let fallbackAgeDetection = null;
+  if (!redditAgeAnalysis.estimatedAgeDays || redditAgeAnalysis.confidence === 'low') {
+    fallbackAgeDetection = detectVideoAge(videoUrl, caption);
+  }
+  
+  let allResults = [];
+  
+  console.log(`🔍 Step 2: Searching fact-check databases with optimized timeline...`);
   
   // Try each timeline strategy until we find results or exhaust all options
   while (searchStrategy < timelineStrategies.length && allResults.length === 0) {
@@ -944,7 +1299,8 @@ const searchFactChecks = async (claim, videoUrl = '', caption = '') => {
     claims: uniqueResults,
     searchStrategy: searchStrategy < timelineStrategies.length ? timelineStrategies[searchStrategy] : { description: "all strategies exhausted" },
     totalStrategiesTried: searchStrategy + 1,
-    estimatedVideoAge: ageDetection.estimatedAge
+    estimatedVideoAge: fallbackAgeDetection?.estimatedAge || null, // Fallback age detection
+    redditAgeAnalysis: redditAgeAnalysis // NEW: Include Reddit age analysis
   };
 };
 
@@ -1716,8 +2072,22 @@ const generateContentPrioritizedSummary = (verdict, confidence, sourceCount, art
     if (factCheckResults.totalStrategiesTried > 1) {
       summary += ` (tried ${factCheckResults.totalStrategiesTried} timeline strategies)`;
     }
+    
+    // NEW: Include Reddit age analysis information
+    if (factCheckResults.redditAgeAnalysis) {
+      const reddit = factCheckResults.redditAgeAnalysis;
+      if (reddit.estimatedAgeDays && reddit.confidence !== 'low') {
+        summary += `\n📅 **Claim Age**: ~${reddit.estimatedAgeDays} days old (${reddit.confidence} confidence from Reddit analysis)`;
+        summary += `\n🗣️ **Reddit Timeline**: ${reddit.totalPosts} discussions found, earliest on ${new Date(reddit.earliestPostDate).toLocaleDateString()}`;
+      } else if (reddit.totalPosts > 0) {
+        summary += `\n🗣️ **Reddit Timeline**: Found ${reddit.totalPosts} discussions, but age analysis inconclusive`;
+      } else {
+        summary += `\n🔍 **Age Detection**: Used video metadata (Reddit search found no discussions)`;
+      }
+    }
+    
     if (factCheckResults.estimatedVideoAge) {
-      summary += `\n📅 **Estimated Content Age**: ~${factCheckResults.estimatedVideoAge} days old`;
+      summary += `\n📺 **Video Age**: ~${factCheckResults.estimatedVideoAge} days old (from metadata)`;
     }
   }
   
@@ -2120,15 +2490,22 @@ const cleanupFiles = async (...filePaths) => {
  * Enhanced main function to process Instagram reel with comprehensive analysis
  */
 const processInstagramReel = async (senderId, attachment) => {
-  console.log(`🎬 Processing Instagram reel for user: ${senderId}`);
+  // Generate unique processing ID for this reel
+  const reelProcessingId = uuidv4().substring(0, 8);
+  
+  console.log(`🎬 [${reelProcessingId}] Processing Instagram reel for user: ${senderId}`);
+  console.log(`📱 [${reelProcessingId}] Reel URL: ${attachment.payload?.url || 'Not provided'}`);
+  console.log(`📝 [${reelProcessingId}] Reel Caption: "${attachment.payload?.title || 'No caption'}" (${(attachment.payload?.title || '').length} chars)`);
   
   if (attachment.type !== 'ig_reel' || !attachment.payload?.url) {
-    throw new Error('Invalid Instagram reel attachment');
+    throw new Error(`[${reelProcessingId}] Invalid Instagram reel attachment`);
   }
   
   const videoUrl = attachment.payload.url;
   const caption = attachment.payload.title || '';
-  const fileName = `${uuidv4()}.mp4`;
+  const fileName = `${reelProcessingId}_${uuidv4()}.mp4`;
+  
+  console.log(`🔧 [${reelProcessingId}] Generated file name: ${fileName}`);
   
   let videoPath = null;
   let audioPath = null;
@@ -2153,17 +2530,22 @@ const processInstagramReel = async (senderId, attachment) => {
     const videoAnalysis = await analyzeVideoFrames(framePaths, transcription);
     
     // Step 5: Extract claim with enhanced context
+    console.log(`🧠 [${reelProcessingId}] Extracting verifiable claim from transcription...`);
     const claim = await extractClaim(transcription, caption);
+    console.log(`🎯 [${reelProcessingId}] Extracted claim: "${claim}"`);
     
     if (claim === 'No verifiable claim found') {
+      console.log(`❌ [${reelProcessingId}] No verifiable claims found - processing complete`);
       return {
         success: false,
         message: 'No verifiable claims found in this video to fact-check.',
-        videoAnalysis: videoAnalysis // Still provide video analysis
+        videoAnalysis: videoAnalysis, // Still provide video analysis
+        reelProcessingId: reelProcessingId
       };
     }
     
     // Step 6: Search for fact-checks with timeline optimization
+    console.log(`🔍 [${reelProcessingId}] Starting enhanced fact-check search with Reddit age detection...`);
     const factCheckResults = await searchFactChecks(claim, videoUrl, caption);
     
     // Step 7: Check logical consistency
@@ -2183,6 +2565,9 @@ const processInstagramReel = async (senderId, attachment) => {
       timestamp: Date.now()
     });
     
+    console.log(`✅ [${reelProcessingId}] Fact-check processing complete!`);
+    console.log(`📊 [${reelProcessingId}] Final verdict: ${analysis.verdict} (${analysis.confidence} confidence)`);
+    
     return {
       success: true,
       claim,
@@ -2190,7 +2575,8 @@ const processInstagramReel = async (senderId, attachment) => {
       analysis,
       videoAnalysis,
       logicalConsistency,
-      resultId
+      resultId,
+      reelProcessingId: reelProcessingId
     };
     
   } catch (error) {
@@ -2223,5 +2609,7 @@ module.exports = {
   analyzeFactChecks,
   // NEW: Memory and conversational features
   searchFactCheckMemory,
-  generateConversationalResponse
+  generateConversationalResponse,
+  // NEW: Reddit-based age detection
+  searchRedditForClaimAge
 };
