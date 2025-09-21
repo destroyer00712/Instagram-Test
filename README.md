@@ -6,7 +6,8 @@ An intelligent Instagram chatbot that automatically fact-checks videos, images, 
 
 **Watch the demo in action:**
 
-<video src="assets/demo/demo.mp4" controls width="800">
+<video width="800" height="450" controls>
+  <source src="assets/demo/demo.mp4" type="video/mp4">
   Your browser does not support the video tag.
 </video>
 
