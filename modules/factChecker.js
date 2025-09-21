@@ -12,6 +12,8 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 // Model configurations
 const MODELS = {
   CLAIM_ANALYSIS: 'gemini-1.5-pro',
+  TRANSCRIPTION: 'gemini-1.5-pro',
+  VISUAL_ANALYSIS: 'gemini-1.5-pro', 
   FALLBACK: 'gemini-2.0-flash-exp'
 };
 
