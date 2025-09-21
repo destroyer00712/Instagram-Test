@@ -18,7 +18,7 @@
 ### Step 4: Save Your API Key
 ```bash
 # Add to your .env file
-GEMINI_API_KEY=AIzaSyAiXHHr6Sv_your_actual_key_here_VCxdrdLqvfoApPM
+GEMINI_API_KEY=your_actual_key_here
 ```
 
 ---
@@ -79,7 +79,7 @@ If you prefer using GCP or need enterprise features:
 ### 1. Add to Environment File
 ```bash
 # In your .env file
-GEMINI_API_KEY=AIzaSyAiXHHr6Sv_your_actual_key_here_VCxdrdLqvfoApPM
+GEMINI_API_KEY=your_actual_key_here
 ```
 
 ### 2. Test Your API Key
@@ -90,7 +90,7 @@ npm run test:gemini
 Expected output:
 ```bash
 ✅ Gemini API key is working correctly!
-🔑 GEMINI_API_KEY preview: AIzaSyAiXHHr6Sv...VCxdrdLqvfoApPM
+🔑 GEMINI_API_KEY preview: AIzaSy...your_key_here
 ```
 
 ---

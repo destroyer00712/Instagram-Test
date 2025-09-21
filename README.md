@@ -1,338 +1,271 @@
-# Instagram Fact-Checker Bot 🔍🤖
+# 🤖 Instagram Fact-Checking Chatbot
 
-An intelligent Instagram chatbot built with Node.js and Express that uses the Instagram Graph API v23.0 to receive and respond to direct messages. **NEW: Now features AI-powered fact-checking of Instagram reels!**
+An intelligent Instagram chatbot that automatically fact-checks videos, images, and text messages using advanced AI technology. Built for the hackathon to combat misinformation on social media.
 
-## Features ✨
+## 🎥 Demo Video
 
-### 🆕 NEW: Enhanced AI Fact-Checking Features
-- 🎥 **Instagram Reel Processing** - Automatically downloads and processes shared reels
-- 🎤 **AI Transcription** - Uses Google Gemini AI to transcribe video audio
-- 🖼️ **Video Frame Analysis** - Analyzes visual content to generate comprehensive descriptions
-- 🧠 **Claim Extraction** - Intelligently identifies factual claims from content
-- 🔍 **Fact Verification** - Queries Google's Fact Check Tools API
-- 🧮 **Logical Consistency Checking** - Detects contradictions and weights them in final decisions
-- 🔄 **Reddit Integration** - Searches Reddit for community verification when Google fails
-- 📊 **Enhanced Weighted Scoring** - Incorporates logical inconsistencies and community sentiment
-- 💾 **Memory Storage** - Remembers fact-check history for each user
+**Watch the demo in action:**
 
-### 🤖 Core Chatbot Features
-- 🔄 **Real-time messaging** - Receives and responds to Instagram DMs via webhooks
-- 🧠 **Smart conversation flow** - Keyword recognition and contextual responses
-- 👋 **Welcome messages** - Greets new users and provides helpful menus
-- 📱 **Quick replies** - Interactive buttons for easy navigation
-- ⚡ **Rate limiting** - Built-in protection against API limits
-- 🔒 **Secure webhooks** - Signature verification for security
-- 📊 **Conversation state** - Tracks user interactions and preferences
-- 🎯 **Keyword matching** - Responds to various user intents
-- 💬 **Typing indicators** - Shows when bot is processing messages
-- 🔧 **Error handling** - Robust error management and logging
+[assets/demo/ScreenRecording_09-21-2025 22-47-04_1.MP4](assets/demo/ScreenRecording_09-21-2025%2022-47-04_1.MP4)
 
-## Prerequisites 📋
+*[Demo shows the bot receiving an Instagram message, processing a video, and providing fact-checked results]*
 
-Before getting started, you'll need:
+## 🚀 Try It Live!
 
-1. **Node.js** (v14 or higher)
-2. **Facebook Developer Account** - [Sign up here](https://developers.facebook.com/)
-3. **Instagram Business Account** - Connected to a Facebook Page
-4. **Webhook endpoint** - Public URL for receiving messages (use ngrok for local testing)
-5. **🆕 FFmpeg** - For video processing (install via `brew install ffmpeg` on macOS)
-6. **🆕 Google AI API Key** - For Gemini AI transcription
-7. **🆕 Google Fact Check API Key** - For fact verification
+**Follow us on Instagram and send a message to test the bot:**
 
-## Installation 🚀
+1. **Follow**: [@chatloom.in](https://instagram.com/chatloom.in) on Instagram
+2. **Send a message** with any video, image, or text you want fact-checked
+3. **Get instant results** with sources and credibility analysis
 
-1. **Clone the repository:**
-   ```bash
-   git clone <repository-url>
-   cd instagram-chatbot
-   ```
+## ✨ Features
 
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
+### 🎯 **Multi-Modal Fact-Checking**
+- **Video Analysis**: Extracts frames, transcribes audio, analyzes visual content
+- **Image Verification**: Reverse image search, metadata analysis, source verification
+- **Text Fact-Checking**: Claims verification against reliable sources
+- **Audio Processing**: Speech-to-text with context analysis
 
-3. **🆕 Run setup script:**
-   ```bash
-   npm run setup
-   ```
+### 🧠 **Advanced AI Technology**
+- **Google Gemini AI**: Latest 2.0 Flash model for superior accuracy
+- **Automatic Fallback**: Seamless model switching for reliability
+- **Conspiracy Detection**: Identifies misinformation patterns
+- **Source Verification**: Cross-references multiple reliable sources
 
-4. **Set up environment variables:**
-   ```bash
-   cp config.template .env
-   ```
-   
-   Edit the `.env` file with your actual values:
-   ```env
-   # Server Configuration
-   PORT=3000
-   NODE_ENV=development
-   
-   # Instagram Graph API Configuration (v23.0)
-   INSTAGRAM_ACCESS_TOKEN=your_instagram_access_token_here
-   INSTAGRAM_APP_ID=your_app_id_here
-   INSTAGRAM_APP_SECRET=your_app_secret_here
-   INSTAGRAM_ACCOUNT_ID=your_instagram_account_id_here
-   
-   # Webhook Configuration
-   WEBHOOK_VERIFY_TOKEN=your_webhook_verify_token_here
-   WEBHOOK_SECRET=your_webhook_secret_here
-   
-   # 🆕 AI Fact-Checking APIs
-   GEMINI_API_KEY=your_gemini_api_key_here
-   GOOGLE_FACTCHECK_API_KEY=your_google_factcheck_api_key_here
-   
-   # 🆕 File Storage
-   TEMP_VIDEO_DIR=./temp/videos/
-   TEMP_AUDIO_DIR=./temp/audio/
-   TEMP_FRAMES_DIR=./temp/frames/
-   ```
+### 🔍 **Comprehensive Analysis**
+- **Credibility Scoring**: 0-100% confidence ratings
+- **Source Attribution**: Links to original sources and fact-checkers
+- **Timeline Analysis**: Checks for outdated or time-sensitive information
+- **Bias Detection**: Identifies potential political or commercial bias
 
-5. **Start the server:**
-   ```bash
-   # Development mode with auto-restart
-   npm run dev
-   
-   # Production mode
-   npm start
-   ```
+### 🛡️ **Security & Privacy**
+- **Webhook Verification**: Secure Instagram webhook integration
+- **Rate Limiting**: Prevents API abuse and quota exhaustion
+- **Environment Protection**: All sensitive data properly secured
+- **Error Handling**: Graceful degradation and comprehensive logging
 
-## Facebook Developer Console Setup 🔧
+## 🏗️ Architecture
 
-### Step 1: Create a Facebook App
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Instagram     │    │   Our Server     │    │   AI Services   │
+│   User          │───▶│   (Node.js)      │───▶│   (Gemini AI)   │
+│   Sends Media   │    │                  │    │                 │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                                │
+                                ▼
+                       ┌──────────────────┐
+                       │   Fact-Checking  │
+                       │   & Sources      │
+                       └──────────────────┘
+```
 
-1. Go to [Facebook Developers](https://developers.facebook.com/)
-2. Click "Create App" → "Business" → "Next"
-3. Fill in your app details:
-   - App Name: "Your Instagram Chatbot"
-   - Contact Email: your-email@example.com
-4. Click "Create App"
+## 🛠️ Tech Stack
 
-### Step 2: Add Instagram Basic Display
+- **Backend**: Node.js, Express.js
+- **AI/ML**: Google Gemini AI (2.0 Flash, 1.5 Pro)
+- **Media Processing**: FFmpeg, Puppeteer
+- **APIs**: Instagram Graph API, Google Custom Search
+- **Storage**: File system (temp processing)
+- **Deployment**: PM2, Nginx
 
-1. In your app dashboard, click "Add Product"
-2. Find "Instagram Basic Display" and click "Set Up"
-3. Click "Create New App" if prompted
+## 📋 Prerequisites
 
-### Step 3: Configure Instagram Messaging
+- Node.js 16+ 
+- Instagram Business Account
+- Google AI Studio API Key
+- Google Custom Search API Key
+- Webhook-capable server (ngrok for development)
 
-1. Go to Instagram → Basic Display → User Token Generator
-2. Add your Instagram account
-3. Generate access token and copy it to your `.env` file
+## 🚀 Quick Setup
 
-### Step 4: Set Up Webhooks
-
-1. In your app, go to "Webhooks" in the left menu
-2. Click "New Subscription"
-3. Choose "Instagram"
-4. Enter your webhook URL: `https://your-domain.com/webhook`
-5. Enter your verify token (same as in `.env`)
-6. Select these subscription fields:
-   - `messages`
-   - `messaging_postbacks`
-   - `messaging_optins`
-7. Click "Verify and Save"
-
-### Step 5: App Review (For Production)
-
-For production use, you'll need to submit your app for review:
-
-1. Go to "App Review" in your Facebook app
-2. Request permissions for:
-   - `instagram_basic`
-   - `instagram_manage_messages`
-3. Provide detailed information about your bot's purpose
-4. Submit for review
-
-## Usage 💬
-
-### Starting the Bot
-
+### 1. Clone & Install
 ```bash
+git clone https://github.com/yourusername/instagram-chatbot.git
+cd instagram-chatbot
+npm install
+```
+
+### 2. Environment Setup
+```bash
+# Copy the example environment file
+cp .env.example .env
+
+# Edit .env with your actual values
+nano .env
+```
+
+### 3. Required Environment Variables
+```bash
+# Instagram Configuration
+INSTAGRAM_ACCESS_TOKEN=your_instagram_access_token
+INSTAGRAM_APP_ID=your_app_id
+INSTAGRAM_APP_SECRET=your_app_secret
+INSTAGRAM_ACCOUNT_ID=your_account_id
+
+# Webhook Security
+WEBHOOK_VERIFY_TOKEN=your_webhook_verify_token
+WEBHOOK_SECRET=your_webhook_secret
+
+# AI Services
+GEMINI_API_KEY=your_gemini_api_key
+GOOGLE_CUSTOM_SEARCH_API_KEY=your_search_api_key
+GOOGLE_CUSTOM_SEARCH_ENGINE_ID=your_search_engine_id
+
+# Server Configuration
+PORT=3000
+NODE_ENV=production
+```
+
+### 4. Test Your Setup
+```bash
+# Test Gemini AI connection
+npm run test:gemini
+
+# Test fact-checking functionality
+npm run test:claims
+
+# Start the server
 npm start
 ```
 
-Your bot will be running at `http://localhost:3000`
+## 📱 Instagram Setup
 
-### Available Commands
+### 1. Create Instagram App
+1. Go to [Facebook Developers](https://developers.facebook.com/)
+2. Create a new app → "Business" type
+3. Add "Instagram Basic Display" product
+4. Get your App ID and App Secret
 
-Users can interact with your bot using these keywords:
+### 2. Configure Webhooks
+1. Add webhook URL: `https://yourdomain.com/webhook`
+2. Subscribe to: `messages`, `messaging_postbacks`
+3. Set verify token (same as `WEBHOOK_VERIFY_TOKEN`)
 
-#### 🆕 Fact-Checking Commands
-- **Share Instagram Reel** - Bot automatically fact-checks claims in the video
-- **history** - View your previous fact-check results
-- **factcheck** - Show fact-check help
+### 3. Get Access Token
+1. Use Instagram Graph API Explorer
+2. Generate long-lived access token
+3. Add to your `.env` file
 
-#### Standard Bot Commands
-- **help** - Show available commands
-- **menu** - Display interactive menu
-- **about** - Learn about your business
-- **contact** - Get contact information
-- **hours** - See business hours
-- **services** - View available services
-- **hello/hi/hey** - Greeting responses
-- **thank you** - Acknowledgment responses
+## 🧪 Testing
 
-### Testing Locally
+```bash
+# Test individual components
+npm run test:env      # Environment variables
+npm run test:api      # API connections
+npm run test:claims   # Fact-checking logic
+npm run test:gemini   # AI model connectivity
 
-1. **Install ngrok** (for local webhook testing):
-   ```bash
-   npm install -g ngrok
-   ```
+# Test with real Instagram message
+npm run test:webhook  # Webhook simulation
+```
 
-2. **Start ngrok**:
-   ```bash
-   ngrok http 3000
-   ```
+## 📊 API Endpoints
 
-3. **Use the ngrok URL** in your Facebook webhook configuration:
-   ```
-   https://your-ngrok-id.ngrok.io/webhook
-   ```
+- `GET /webhook` - Webhook verification
+- `POST /webhook` - Receive Instagram messages
+- `GET /health` - Health check
+- `GET /status` - System status
 
-## API Endpoints 🔗
+## 🔧 Configuration
 
-### Webhook Verification
-- **GET** `/webhook` - Verifies webhook with Facebook
-- **POST** `/webhook` - Receives Instagram messages
-
-### Health Check
-- **GET** `/health` - Returns server health status
-
-### Root
-- **GET** `/` - Basic server status
-
-## Configuration ⚙️
-
-### Customizing Responses
-
-Edit the `botResponses` object in `modules/messageHandler.js`:
-
+### Model Settings
 ```javascript
-const botResponses = {
-  greeting: [
-    "Hello! 👋 Welcome to our Instagram chatbot!",
-    "Hi there! 😊 How can I help you today?"
-  ],
-  help: "Here's what I can help you with...",
-  // Add more responses...
+// In modules/factChecker.js
+const MODEL_CONFIG = {
+  TRANSCRIPTION: 'gemini-1.5-pro',      // Primary model
+  FALLBACK: 'gemini-2.0-flash-exp',    // Fallback model
+  FACT_CHECK: 'gemini-1.5-pro',        // Fact-checking model
+  CONSPIRACY: 'gemini-1.5-pro'         // Conspiracy detection
 };
 ```
 
 ### Rate Limiting
-
-Adjust rate limits in `modules/instagramAPI.js`:
-
 ```javascript
-const rateLimiter = {
-  maxRequests: 60, // requests per minute
-  windowMs: 60 * 1000 // 1 minute window
+// In modules/instagramAPI.js
+const rateLimit = {
+  maxRequests: 60,        // Requests per minute
+  windowMs: 60 * 1000     // 1 minute window
 };
 ```
 
-### Adding New Commands
+## 🚀 Deployment
 
-Add new keyword recognition in `generateResponse()` function:
+### Using PM2
+```bash
+# Install PM2
+npm install -g pm2
 
-```javascript
-if (text.includes('new_command')) {
-  return {
-    type: 'text',
-    text: 'Your response here'
-  };
-}
+# Start with ecosystem file
+pm2 start ecosystem.config.js
+
+# Monitor
+pm2 monit
 ```
 
-## Project Structure 📁
+### Using Docker
+```bash
+# Build image
+docker build -t instagram-chatbot .
 
-```
-instagram-chatbot/
-├── modules/
-│   ├── webhook.js          # Webhook handling
-│   ├── instagramAPI.js     # Instagram API integration
-│   ├── messageHandler.js   # Conversation logic
-│   └── factChecker.js      # 🆕 AI fact-checking functionality
-├── temp/                   # 🆕 Temporary file storage
-│   ├── videos/            # Downloaded Instagram reels
-│   └── audio/             # Extracted audio files
-├── server.js               # Main server file
-├── setup.js                # 🆕 Setup and validation script
-├── package.json           # Dependencies
-├── config.template        # Environment variables template
-└── README.md             # Documentation
+# Run container
+docker run -d --env-file .env -p 3000:3000 instagram-chatbot
 ```
 
-## Error Handling 🚨
+## 📈 Monitoring
 
-The bot includes comprehensive error handling:
+### Logs
+```bash
+# View logs
+pm2 logs instagram-chatbot
 
-- **Rate limiting** - Prevents API quota exceeded
-- **Webhook verification** - Ensures secure message delivery
-- **API errors** - Gracefully handles Instagram API failures
-- **Invalid messages** - Responds appropriately to unknown inputs
-- **Network errors** - Retries and fallback responses
+# Real-time monitoring
+pm2 monit
+```
 
-## Security 🔒
+### Health Checks
+- `GET /health` - Basic health check
+- `GET /status` - Detailed system status
+- Automatic error reporting and recovery
 
-- **Webhook signature verification** - Validates message authenticity
-- **Environment variables** - Keeps sensitive data secure
-- **Rate limiting** - Prevents abuse
-- **Input validation** - Sanitizes user inputs
+## 🛡️ Security Features
 
-## Common Issues & Solutions 🔧
+- **Webhook Verification**: HMAC signature validation
+- **Rate Limiting**: Prevents abuse and quota exhaustion
+- **Environment Variables**: All secrets properly secured
+- **Input Validation**: Sanitizes all user inputs
+- **Error Handling**: No sensitive data in error messages
 
-### Webhook Not Receiving Messages
+## 🔍 Fact-Checking Process
 
-1. **Check webhook URL** - Ensure it's publicly accessible
-2. **Verify tokens** - Confirm WEBHOOK_VERIFY_TOKEN matches
-3. **Check permissions** - Ensure proper Instagram API permissions
-4. **Review logs** - Check server logs for errors
+1. **Receive Message**: Instagram webhook triggers processing
+2. **Media Extraction**: Download and analyze video/image content
+3. **Content Analysis**: 
+   - Extract frames from videos
+   - Transcribe audio content
+   - Analyze visual elements
+4. **AI Processing**: 
+   - Run through Gemini AI models
+   - Detect conspiracy theories
+   - Verify factual claims
+5. **Source Verification**: 
+   - Search reliable fact-checking sources
+   - Cross-reference information
+   - Check publication dates
+6. **Response Generation**: 
+   - Compile results with confidence scores
+   - Include source links
+   - Send formatted response
 
-### Rate Limiting Issues
+## 📚 Documentation
 
-1. **Adjust limits** - Modify `RATE_LIMIT_REQUESTS_PER_MINUTE`
-2. **Implement queuing** - Add message queue for high volume
-3. **Monitor usage** - Track API call frequency
+- [API Setup Guide](GEMINI_API_KEY_SETUP.md)
+- [Google Search Implementation](GOOGLE_CUSTOM_SEARCH_IMPLEMENTATION.md)
+- [System Architecture](SYSTEM_ARCHITECTURE.md)
+- [Troubleshooting Guide](TROUBLESHOOTING.md)
+- [Enhanced Features](ENHANCED_FEATURES.md)
 
-### Authentication Errors
-
-1. **Refresh tokens** - Instagram tokens expire periodically
-2. **Check permissions** - Verify app has necessary permissions
-3. **Update app** - Ensure app is approved for production use
-
-## Deployment 🚀
-
-### Heroku Deployment
-
-1. **Install Heroku CLI**
-2. **Create Heroku app**:
-   ```bash
-   heroku create your-bot-name
-   ```
-3. **Set environment variables**:
-   ```bash
-   heroku config:set INSTAGRAM_ACCESS_TOKEN=your_token
-   heroku config:set WEBHOOK_VERIFY_TOKEN=your_verify_token
-   # ... set all other variables
-   ```
-4. **Deploy**:
-   ```bash
-   git push heroku main
-   ```
-
-### AWS/DigitalOcean Deployment
-
-1. **Set up server** with Node.js
-2. **Clone repository**
-3. **Install dependencies**: `npm install`
-4. **Set environment variables**
-5. **Use PM2** for process management:
-   ```bash
-   npm install -g pm2
-   pm2 start server.js --name "instagram-bot"
-   ```
-
-## Contributing 🤝
+## 🤝 Contributing
 
 1. Fork the repository
 2. Create a feature branch
@@ -340,72 +273,27 @@ The bot includes comprehensive error handling:
 4. Add tests if applicable
 5. Submit a pull request
 
-## License 📄
+## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License - see [LICENSE](LICENSE) file for details.
 
-## Support 💬
+## 🆘 Support
 
-For support and questions:
+- **Issues**: [GitHub Issues](https://github.com/yourusername/instagram-chatbot/issues)
+- **Documentation**: Check the `/docs` folder
+- **Contact**: [@chatloom.in](https://instagram.com/chatloom.in) on Instagram
 
-- **GitHub Issues** - Report bugs and request features
-- **Email** - your-email@example.com
-- **Documentation** - Check this README and inline comments
+## 🏆 Hackathon Project
 
-## Changelog 📝
+This project was built for the hackathon to address the critical issue of misinformation on social media platforms. The bot provides:
 
-### Version 2.0.0 (Current)
-- 🆕 **AI-Powered Fact-Checking** - Automatically processes Instagram reels
-- 🆕 **Google Gemini Integration** - Transcribes video audio using AI
-- 🆕 **Fact Verification** - Uses Google Fact Check Tools API
-- 🆕 **Claim Analysis** - Intelligently extracts verifiable claims
-- 🆕 **Source Attribution** - Provides credible fact-check sources
-- 🆕 **Memory System** - Stores and recalls fact-check history
-- 🆕 **Video Processing** - Downloads and processes video content
-- Improved error handling and logging
-- Enhanced conversation management
+- **Instant fact-checking** for Instagram users
+- **Multi-modal analysis** (text, images, videos)
+- **Reliable source attribution**
+- **Easy-to-understand results**
 
-### Version 1.0.0
-- Initial release
-- Basic messaging functionality
-- Webhook integration
-- Conversation state management
-- Error handling and rate limiting
-
-## 🔍 How Fact-Checking Works
-
-1. **User shares Instagram reel** → Bot detects video attachment
-2. **Video download** → Downloads video from Instagram's CDN
-3. **Audio extraction** → Uses FFmpeg to extract audio track
-4. **AI transcription** → Google Gemini transcribes speech to text
-5. **Claim identification** → AI analyzes content for factual claims
-6. **Fact verification** → Searches Google Fact Check Tools API
-7. **Result analysis** → Evaluates sources and generates verdict
-8. **User response** → Sends detailed fact-check results
-9. **Memory storage** → Saves results for future reference
-
-## 📊 Fact-Check Result Example
-
-```
-📊 Fact-Check Results
-
-🎯 Claim: "Charlie Kirk was fatally shot by an assassin"
-
-⭐ Verdict: False (High confidence)
-
-📝 Summary: Based on 3 fact-check sources, this claim appears to be false or misleading. Latest review by AP News rated it as "This is false".
-
-🔗 Sources:
-1. AP News - This is false
-   https://apnews.com/article/fact-check-charlie-kirk...
-2. Snopes - False
-   https://snopes.com/fact-check/charlie-kirk...
-3. PolitiFact - Pants on Fire
-   https://politifact.com/factchecks/...
-
-💬 You can ask me about this fact-check anytime!
-```
+**Try it now**: Follow [@chatloom.in](https://instagram.com/chatloom.in) and send any message to get started!
 
 ---
 
-**Built with ❤️ using Node.js, Instagram Graph API, Google AI, and Fact Check Tools** 
+*Built with ❤️ for a more informed social media experience*

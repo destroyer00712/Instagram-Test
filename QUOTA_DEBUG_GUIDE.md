@@ -5,7 +5,7 @@
 Based on the error logs and testing, here's what's happening:
 
 ### ✅ **What's Working:**
-- API key is loaded correctly (`AIzaSyAiXHHr6Sv...VCxdrdLqvfoApPM`)
+- API key is loaded correctly (starts with `AIzaSy...`)
 - `gemini-1.5-flash` model works fine
 - Code is using the correct environment variable `GEMINI_API_KEY`
 
@@ -63,7 +63,7 @@ The enhanced logging will now show:
 # On startup
 🔑 GEMINI_API_KEY exists: true
 🔑 GEMINI_API_KEY length: 39
-🔑 GEMINI_API_KEY preview: AIzaSyAiXHHr6Sv...VCxdrdLqvfoApPM
+🔑 GEMINI_API_KEY preview: AIzaSy...your_key_here
 
 # During processing
 🤖 [makeGeminiAPICall] Attempting API call with model: gemini-1.5-pro
