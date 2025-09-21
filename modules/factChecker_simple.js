@@ -87,7 +87,7 @@ const createSearchQueries = (claim) => {
   ];
   
   console.log(`✅ Created ${queries.length} search queries`);
-        return queries;
+  return queries;
 };
 
 /**
@@ -124,7 +124,7 @@ const scrapeArticleContent = async (url, title = '') => {
     // Extract main content
     let content = '';
     const contentSelectors = [
-      'article',
+      'article', 
       '[role="main"]', 
       '.post-content', 
       '.article-content',
@@ -190,24 +190,22 @@ ARTICLE CONTENT:
 TASK: Determine if this article CONFIRMS, DENIES, or is UNCLEAR about the specific claim.
 
 IMPORTANT INSTRUCTIONS:
-1. **FOCUS ON CORE TRUTH** - Don't get stuck on minor technicalities like "1 rupee" vs "1 rupee per year"
-2. **BE DECISIVE** - If the essence of the claim is supported by the article, mark as TRUE
-3. **LOOK FOR THE MAIN EVENT** - Did the core event happen? (land acquisition, death, business deal, etc.)
-4. **IGNORE MINOR DETAILS** - Focus on whether the main claim is substantially correct
-5. **ONLY MARK FALSE** if the article explicitly says the event did NOT happen
+1. **BE DECISIVE** - If the article clearly states something happened, mark as TRUE
+2. **READ CAREFULLY** - Look for direct mentions of the people, events, numbers in the claim
+3. **FACTUAL REPORTING** - If reputable news sources report it as fact, it's likely TRUE
+4. **OFFICIAL STATEMENTS** - Government/company official statements should be treated as factual
+5. **CLEAR DENIALS** - Only mark FALSE if article explicitly contradicts the claim
 
 EXAMPLES:
-- Claim: "Adani bought land for 1 rupee" + Article: "Adani got land for ₹1 per year" → **TRUE** (core event happened)
-- Claim: "Person X died" + Article: "Person X passed away yesterday" → **TRUE** (same event, different words)
-- Claim: "Company bought Company Y" + Article: "Merger completed between companies" → **TRUE** (acquisition happened)
-- Claim: "Event X happened" + Article: "Event X never occurred, it's fake news" → **FALSE** (explicit denial)
-
-**PRIORITY: If a reputable news source reports something happened, it probably did happen - mark as TRUE unless explicitly denied.**
+- If claim is "Adani bought land for 1 rupee" and article says "Adani acquired land for ₹1", mark TRUE
+- If claim is "Person X died" and article reports their death, mark TRUE  
+- If claim is "Company Y acquired Z" and article confirms the acquisition, mark TRUE
+- Only mark FALSE if article explicitly says "This did NOT happen" or provides contradicting facts
 
 OUTPUT FORMAT (JSON only):
 {
   "verdict": "TRUE|FALSE|UNCLEAR",
-  "confidence": "HIGH|MEDIUM|LOW", 
+  "confidence": "HIGH|MEDIUM|LOW",
   "reasoning": "Brief explanation of why this verdict was reached",
   "keyEvidence": ["Key evidence point 1", "Key evidence point 2"]
 }`;
@@ -218,7 +216,7 @@ OUTPUT FORMAT (JSON only):
       GENERATION_CONFIGS.HIGH_ACCURACY,
       prompt
     );
-    
+
     const response = result.response.text().trim();
     
     // Clean up the response to extract JSON
@@ -324,7 +322,7 @@ const searchFactChecks = async (claim) => {
               allResults.push(result);
               console.log(`✅ Added result: ${analysis.verdict} from ${result.publisher}`);
               
-    } else {
+            } else {
               console.log(`⚠️ Skipping - insufficient content`);
             }
             
@@ -335,7 +333,7 @@ const searchFactChecks = async (claim) => {
             console.log(`❌ Error processing article: ${articleError.message}`);
           }
         }
-    } else {
+      } else {
         console.log(`❌ No results for: "${query}"`);
       }
       
@@ -411,43 +409,19 @@ const analyzeFactChecks = async (factCheckResults, originalClaim) => {
   console.log(`📊 Vote Count: TRUE=${trueCount}, FALSE=${falseCount}, MIXED=${mixedCount}, UNCLEAR=${unclearCount}`);
   console.log(`📊 Average Confidence: ${(avgConfidence * 100).toFixed(1)}%`);
   
-  // ENHANCED DECISION LOGIC: Be decisive when authoritative sources are clear
+  // SIMPLE DECISION LOGIC: Majority wins
   let finalVerdict = 'Unknown';
   let finalConfidence = 'Low';
   
-  // Count high-confidence sources
-  const highConfidenceFalse = factCheckResults.filter(r => 
-    r.aiAnalysis?.verdict === 'FALSE' && r.aiAnalysis?.confidence === 'HIGH'
-  ).length;
-  
-  const highConfidenceTrue = factCheckResults.filter(r => 
-    r.aiAnalysis?.verdict === 'TRUE' && r.aiAnalysis?.confidence === 'HIGH'  
-  ).length;
-  
-  console.log(`🔍 High-confidence sources: TRUE=${highConfidenceTrue}, FALSE=${highConfidenceFalse}`);
-  
-  // PRIORITY: If ANY high-confidence source says FALSE (conspiracy theories), lean FALSE
-  if (highConfidenceFalse > 0 && falseCount >= highConfidenceFalse) {
-    finalVerdict = 'False';
-    finalConfidence = highConfidenceFalse >= 2 ? 'High' : 'Medium';
-    console.log(`🎯 VERDICT: FALSE (${highConfidenceFalse} high-confidence sources debunk this)`);
-    
-  // PRIORITY: If ANY high-confidence source says TRUE (real news), lean TRUE  
-  } else if (highConfidenceTrue > 0 && trueCount >= highConfidenceTrue) {
-    finalVerdict = 'True';
-    finalConfidence = highConfidenceTrue >= 2 ? 'High' : 'Medium';
-    console.log(`🎯 VERDICT: TRUE (${highConfidenceTrue} high-confidence sources confirm this)`);
-    
-  // FALLBACK: Standard majority wins
-  } else if (trueCount > falseCount && trueCount > 0) {
+  if (trueCount > falseCount && trueCount > mixedCount && trueCount > unclearCount) {
     finalVerdict = 'True';
     finalConfidence = avgConfidence > 0.8 ? 'High' : (avgConfidence > 0.6 ? 'Medium' : 'Low');
     console.log(`🎯 VERDICT: TRUE (${trueCount} sources confirm)`);
-  } else if (falseCount > trueCount && falseCount > 0) {
+  } else if (falseCount > trueCount && falseCount > mixedCount && falseCount > unclearCount) {
     finalVerdict = 'False';  
     finalConfidence = avgConfidence > 0.8 ? 'High' : (avgConfidence > 0.6 ? 'Medium' : 'Low');
     console.log(`🎯 VERDICT: FALSE (${falseCount} sources contradict)`);
-  } else if (mixedCount > 0) {
+  } else if (mixedCount > 0 && (trueCount + falseCount) > 0) {
     finalVerdict = 'Mixed';
     finalConfidence = 'Medium';
     console.log(`🎯 VERDICT: MIXED (conflicting evidence)`);
@@ -474,7 +448,7 @@ const analyzeFactChecks = async (factCheckResults, originalClaim) => {
   
   console.log(`🏁 FINAL: ${finalVerdict} (${finalConfidence})`);
   
-    return {
+  return {
     verdict: finalVerdict,
     confidence: finalConfidence,
     summary: summary,
@@ -487,176 +461,14 @@ const analyzeFactChecks = async (factCheckResults, originalClaim) => {
   };
 };
 
-/**
- * Extract claim from Instagram reel caption using AI
- */
-const extractClaimFromReel = async (caption, videoUrl = '') => {
-  console.log(`🧠 Extracting claim from Instagram reel...`);
-  
-  if (!caption || caption.length < 10) {
-    console.log(`⚠️ Caption too short or empty`);
-    return 'No verifiable claim found';
-  }
-  
-  const prompt = `Extract the most important FACTUAL CLAIM from this Instagram reel caption.
-
-CAPTION: "${caption}"
-
-TASK: Find a specific factual statement that can be verified. Look for:
-- Claims about events, people, companies, numbers
-- News-worthy statements  
-- Specific allegations or facts
-
-EXAMPLES OF GOOD CLAIMS:
-- "Adani bought land for 1 rupee"
-- "Person X died yesterday"
-- "Company Y acquired Company Z"
-
-AVOID:
-- Opinions ("This is bad")
-- Questions ("What do you think?")
-- Vague statements ("Things are getting worse")
-
-If no clear factual claim is found, return: "No verifiable claim found"
-
-OUTPUT: Return only the extracted claim as plain text.`;
-
-  try {
-    const { result } = await makeGeminiAPICall(
-      MODELS.CLAIM_ANALYSIS,
-      GENERATION_CONFIGS.HIGH_ACCURACY,
-      prompt
-    );
-
-    const claim = result.response.text().trim();
-    console.log(`✅ Extracted claim: "${claim}"`);
-    return claim;
-    
-  } catch (error) {
-    console.log(`❌ Claim extraction failed: ${error.message}`);
-    return 'No verifiable claim found';
-  }
-};
-
-/**
- * SIMPLIFIED: Process Instagram reel using ONLY Google Custom Search + AI
- */
-const processInstagramReel = async (senderId, attachment) => {
-  const reelId = uuidv4().substring(0, 8);
-  
-  console.log(`🎬 [${reelId}] SIMPLIFIED Instagram reel processing for user: ${senderId}`);
-  console.log(`📱 [${reelId}] Using ONLY Google Custom Search + AI (no Reddit, no fact-check APIs)`);
-  
-  if (attachment.type !== 'ig_reel' || !attachment.payload?.url) {
-    throw new Error(`[${reelId}] Invalid Instagram reel attachment`);
-  }
-  
-  const videoUrl = attachment.payload.url;
-  const caption = attachment.payload.title || '';
-  
-  console.log(`📝 [${reelId}] Caption: "${caption}"`);
-  
-  try {
-    // STEP 1: Extract claim from reel caption
-    console.log(`🧠 [${reelId}] Extracting verifiable claim...`);
-    const claim = await extractClaimFromReel(caption, videoUrl);
-    
-    if (claim === 'No verifiable claim found') {
-      console.log(`❌ [${reelId}] No verifiable claims found`);
-      return {
-        success: false,
-        message: 'No verifiable claims found in this reel to fact-check.',
-        claim: claim,
-        reelId: reelId
-      };
-    }
-    
-    console.log(`✅ [${reelId}] Found claim: "${claim}"`);
-    
-    // STEP 2: Fact-check using ONLY Google Custom Search + AI
-    console.log(`🔍 [${reelId}] Fact-checking with Google Custom Search...`);
-    const factCheckResults = await searchFactChecks(claim);
-    
-    if (factCheckResults.length === 0) {
-      console.log(`⚠️ [${reelId}] No sources found`);
-      return {
-        success: false,
-        message: 'No reliable sources found to verify this claim.',
-        claim: claim,
-        reelId: reelId
-      };
-    }
-    
-    console.log(`📊 [${reelId}] Found ${factCheckResults.length} sources, analyzing...`);
-    
-    // STEP 3: Analyze results (NO Reddit, NO old fact-check APIs)
-    const analysis = await analyzeFactChecks(factCheckResults, claim);
-    
-    console.log(`✅ [${reelId}] COMPLETE: ${analysis.verdict} (${analysis.confidence})`);
-    
-    // STEP 4: Store in user history
-    const factCheckRecord = {
-      userId: senderId,
-      result: {
-        claim: claim,
-        analysis: analysis
-      },
-      timestamp: Date.now(),
-      reelId: reelId
-    };
-    
-    if (!factCheckMemory.has(senderId)) {
-      factCheckMemory.set(senderId, []);
-    }
-    const userHistory = factCheckMemory.get(senderId);
-    userHistory.push(factCheckRecord);
-    
-    // Keep last 50 records
-    if (userHistory.length > 50) {
-      userHistory.splice(0, userHistory.length - 50);
-    }
-    
-    console.log(`💾 [${reelId}] Stored in user history`);
-    
-    return {
-      success: true,
-      claim: claim,
-      analysis: analysis,
-      sources: factCheckResults.length,
-      reelId: reelId
-    };
-    
-  } catch (error) {
-    console.error(`❌ [${reelId}] Error:`, error);
-    throw error;
-  }
-};
-
-// Export the essential functions for the Instagram webhook
+// Export only the essential functions
 module.exports = {
   searchFactChecks,
   analyzeFactChecks,
-  processInstagramReel,  // NEW: Simplified version for Instagram webhook
   makeGeminiAPICall,
-  // Compatibility functions
+  // Keep some functions for compatibility
   getUserFactCheckHistory: (userId) => factCheckMemory.get(userId) || [],
-  generateDetailedExplanation: async (claim, analysis) => ({ 
-    found: true, 
-    response: `Here's more detail about "${claim}": ${analysis.summary || 'The claim was analyzed using Google Custom Search and AI.'} Confidence: ${analysis.confidence}.` 
-  }),
-  generateGeneralConversation: async (userId, message) => ({ 
-    found: true, 
-    response: "I'm a fact-checking bot! Share an Instagram reel with claims and I'll verify them using Google Custom Search. You can also ask me about previous fact-checks." 
-  }),
-  generateConversationalResponse: async (userId, query, checks) => ({ 
-    found: true, 
-    response: checks.length > 0 ? `I found ${checks.length} previous fact-checks. What specifically would you like to know?` : "I haven't fact-checked anything for you yet. Share a reel to get started!" 
-  }),
-  searchFactCheckMemory: async (userId, query) => {
-    const history = factCheckMemory.get(userId) || [];
-    return history.filter(check => 
-      check.result.claim.toLowerCase().includes(query.toLowerCase()) ||
-      check.result.analysis.summary?.toLowerCase().includes(query.toLowerCase())
-    );
-  }
+  generateDetailedExplanation: async (claim, analysis) => ({ found: true, response: "Detailed analysis not implemented in simple version" }),
+  generateGeneralConversation: async (userId, message) => ({ found: true, response: "General conversation not implemented in simple version" }),
+  generateConversationalResponse: async (userId, query, checks) => ({ found: true, response: "Conversational response not implemented in simple version" })
 };
