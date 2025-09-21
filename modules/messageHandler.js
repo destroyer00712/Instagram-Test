@@ -14,16 +14,15 @@ const botResponses = {
     const verdictIcon = analysis.verdict === 'True' ? '✅' : analysis.verdict === 'False' ? '❌' : '⚠️';
     const confidenceIcon = analysis.confidence === 'High' ? '🎯' : analysis.confidence === 'Medium' ? '📊' : '🤔';
     
-    return `${verdictIcon} Found in ${sourceText}:
-1. www.reddit.com
-2. x.com
-3. www.facebook.com
+    const verdictText = analysis.verdict === 'True' ? 'This appears to be true' : analysis.verdict === 'False' ? 'This appears to be false' : 'The evidence is mixed';
+    
+    return `${verdictIcon} ${verdictText}! I found this information across ${sourceText} including major news outlets and fact-checkers.
 
-📋 Multiple sources confirm this claim.
+${analysis.verdict === 'True' ? '✅' : analysis.verdict === 'False' ? '❌' : '⚠️'} The sources generally ${analysis.verdict === 'True' ? 'confirm' : analysis.verdict === 'False' ? 'contradict' : 'have mixed views on'} this claim.
 
-${confidenceIcon} Confidence: ${analysis.confidence}
+${confidenceIcon} I'm ${analysis.confidence.toLowerCase()}ly confident in this assessment.
 
-💬 Ask "tell me more" for details!`;
+💬 Want more details? Just ask "tell me more"!`;
   },
   
   noClaimFound: "🤔 I couldn't find any verifiable claims in this reel to fact-check. The content might be opinion-based or not contain specific factual statements.",

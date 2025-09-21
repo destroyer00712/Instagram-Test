@@ -159,7 +159,7 @@ const handleMessage = (messageEvent) => {
     // Process the message
     console.log('🔄 Forwarding to message handler...');
     try {
-      messageHandler.processMessage(senderId, messageText, timestamp);
+      await messageHandler.handleMessage(senderId, { text: messageText });
       console.log('✅ Message handler completed successfully');
     } catch (error) {
       console.error('❌ Error in message handler:', error);
@@ -172,7 +172,7 @@ const handleMessage = (messageEvent) => {
     
     console.log('🔄 Forwarding to attachment handler...');
     try {
-      messageHandler.processAttachment(senderId, messageEvent.message.attachments, timestamp);
+      await messageHandler.handleMessage(senderId, { attachments: messageEvent.message.attachments });
       console.log('✅ Attachment handler completed successfully');
     } catch (error) {
       console.error('❌ Error in attachment handler:', error);
