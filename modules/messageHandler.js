@@ -7,25 +7,51 @@ const conversationState = new Map();
 
 // CLEAN Fact-checking bot responses (NO old static chatbot elements)
 const botResponses = {
-  factCheckProcessing: "🔍 Processing your reel for fact-checking... Please wait while I analyze the video and audio content.",
+  factCheckProcessing: "🔍 Processing your reel for fact-checking... Please wait while I analyze the caption, video and audio content.",
   
-  factCheckComplete: (claim, analysis) => {
+  factCheckComplete: (claim, analysis, captionInfo = null) => {
     const sourceText = analysis.sources && analysis.sources > 1 ? `${analysis.sources} sources` : "multiple sources";
     const verdictIcon = analysis.verdict === 'True' ? '✅' : analysis.verdict === 'False' ? '❌' : '⚠️';
     const confidenceIcon = analysis.confidence === 'High' ? '🎯' : analysis.confidence === 'Medium' ? '📊' : '🤔';
     
     const verdictText = analysis.verdict === 'True' ? 'This appears to be true' : analysis.verdict === 'False' ? 'This appears to be false' : 'The evidence is mixed';
     
+    // Add caption processing info if available
+    let captionNote = '';
+    if (captionInfo) {
+      if (captionInfo.isSignificant) {
+        captionNote = `\n📝 I found substantial factual content in the caption and prioritized it in my analysis.`;
+      } else {
+        captionNote = `\n🎵 The caption didn't contain significant factual claims, so I focused on the audio and video content.`;
+      }
+      
+      if (captionInfo.removed && captionInfo.removed.length > 0) {
+        captionNote += ` (Filtered out ${captionInfo.removed.length} hashtag${captionInfo.removed.length > 1 ? 's' : ''})`;
+      }
+    }
+    
     return `${verdictIcon} ${verdictText}! I found this information across ${sourceText} including major news outlets and fact-checkers.
 
 ${analysis.verdict === 'True' ? '✅' : analysis.verdict === 'False' ? '❌' : '⚠️'} The sources generally ${analysis.verdict === 'True' ? 'confirm' : analysis.verdict === 'False' ? 'contradict' : 'have mixed views on'} this claim.
 
-${confidenceIcon} I'm ${analysis.confidence.toLowerCase()}ly confident in this assessment.
+${confidenceIcon} I'm ${analysis.confidence.toLowerCase()}ly confident in this assessment.${captionNote}
 
 💬 Want more details? Just ask "tell me more"!`;
   },
   
-  noClaimFound: "🤔 I couldn't find any verifiable claims in this reel to fact-check. The content might be opinion-based or not contain specific factual statements.",
+  noClaimFound: (result = null) => {
+    let baseMessage = "🤔 I couldn't find any verifiable claims in this reel to fact-check. The content might be opinion-based or not contain specific factual statements.";
+    
+    if (result && result.captionInfo) {
+      if (result.captionInfo.isSignificant) {
+        baseMessage += `\n\n📝 I analyzed the caption (${result.captionInfo.cleanedLength} chars after removing hashtags), along with the audio and video content.`;
+      } else {
+        baseMessage += `\n\n🎵 I analyzed the audio, video, and caption content. The caption was mostly promotional content.`;
+      }
+    }
+    
+    return baseMessage;
+  },
   
   factCheckError: "❌ Sorry, I encountered an error while fact-checking this video. Please try again later.",
   
@@ -113,12 +139,12 @@ const processAttachment = async (senderId, attachments) => {
         const result = await factChecker.processInstagramReel(senderId, igReel);
         
         if (result.success) {
-          // Send fact-check results
-          const responseMessage = botResponses.factCheckComplete(result.claim, result.analysis);
+          // Send fact-check results with caption information
+          const responseMessage = botResponses.factCheckComplete(result.claim, result.analysis, result.captionInfo);
           await instagramAPI.sendMessage(senderId, responseMessage);
         } else {
-          // No claims found
-          await instagramAPI.sendMessage(senderId, botResponses.noClaimFound);
+          // No claims found - provide detailed feedback about what was analyzed
+          await instagramAPI.sendMessage(senderId, botResponses.noClaimFound(result));
         }
         
       } catch (factCheckError) {

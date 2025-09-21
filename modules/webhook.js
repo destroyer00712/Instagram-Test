@@ -3,14 +3,20 @@ const messageHandler = require('./messageHandler');
 
 // DEDUPLICATION: Track processed messages to avoid duplicates/echoes
 const processedMessages = new Set();
+const processedWebhooks = new Set(); // Track webhook request hashes
 const MESSAGE_CACHE_SIZE = 1000; // Keep last 1000 message IDs
+const WEBHOOK_CACHE_SIZE = 500; // Keep last 500 webhook hashes
 const MESSAGE_EXPIRY_TIME = 5 * 60 * 1000; // 5 minutes
 
-// Clean up old message IDs periodically to prevent memory leaks
+// Clean up old caches periodically to prevent memory leaks
 setInterval(() => {
   if (processedMessages.size > MESSAGE_CACHE_SIZE) {
     console.log(`🧹 Cleaning message cache (size: ${processedMessages.size})`);
     processedMessages.clear();
+  }
+  if (processedWebhooks.size > WEBHOOK_CACHE_SIZE) {
+    console.log(`🧹 Cleaning webhook cache (size: ${processedWebhooks.size})`);
+    processedWebhooks.clear();
   }
 }, 60000); // Clean every minute
 
@@ -62,16 +68,21 @@ const verify = (req, res) => {
  * This handles incoming Instagram messages
  */
 const receive = async (req, res) => {
-  console.log(`📨 [${new Date().toISOString()}] Webhook message received`);
-  console.log('🔍 Request Details:');
-  console.log('  - Method:', req.method);
-  console.log('  - URL:', req.url);
-  console.log('  - Headers:', JSON.stringify(req.headers, null, 2));
-  console.log('  - User-Agent:', req.headers['user-agent']);
-  console.log('  - Content-Type:', req.headers['content-type']);
-  
   const body = req.body;
-  console.log('📦 Request Body:', JSON.stringify(body, null, 2));
+  const timestamp = new Date().toISOString();
+  
+  // Create a hash of the webhook payload to detect duplicate webhook calls
+  const webhookHash = crypto.createHash('md5').update(JSON.stringify(body)).digest('hex');
+  
+  // Check for duplicate webhook calls at the request level
+  if (processedWebhooks.has(webhookHash)) {
+    console.log(`🔄 DUPLICATE WEBHOOK IGNORED: ${webhookHash}`);
+    res.status(200).send('EVENT_RECEIVED');
+    return;
+  }
+  
+  processedWebhooks.add(webhookHash);
+  console.log(`📨 [${timestamp}] New webhook: ${webhookHash.substring(0, 8)}... from ${req.headers['user-agent'] || 'unknown'}`);
   
   // Check if this is a page subscription
   if (body.object === 'instagram') {
@@ -83,12 +94,11 @@ const receive = async (req, res) => {
     
     // Iterate over each entry - there may be multiple if batched
     for (const [entryIndex, entry] of body.entry.entries()) {
-      console.log(`🔄 Processing entry ${entryIndex + 1}:`, JSON.stringify(entry, null, 2));
+      console.log(`🔄 Processing entry ${entryIndex + 1}: ${entry.messaging ? entry.messaging.length : 0} messages`);
       
       if (entry.messaging) {
-        console.log(`  - Found ${entry.messaging.length} messaging events`);
         for (const [messageIndex, messageEvent] of entry.messaging.entries()) {
-          console.log(`📋 Processing message event ${messageIndex + 1}:`, JSON.stringify(messageEvent, null, 2));
+          // Reduced logging - let handleMessage do the detailed logging for valid messages
           await handleMessage(messageEvent);
         }
       } else {
@@ -137,23 +147,32 @@ const verifySignature = (req) => {
  * Handle incoming message
  */
 const handleMessage = async (messageEvent) => {
-  console.log(`🔍 [${new Date().toISOString()}] Message Event Details:`, JSON.stringify(messageEvent, null, 2));
-  
   const senderId = messageEvent.sender ? messageEvent.sender.id : 'unknown';
   const recipientId = messageEvent.recipient ? messageEvent.recipient.id : 'unknown';
   const timestamp = messageEvent.timestamp || Date.now();
   const messageId = messageEvent.message?.mid || `${senderId}_${timestamp}`;
   
+  // 🚫 EARLY FILTERING: Skip echo messages immediately (messages sent by the bot itself)
+  if (messageEvent.message && messageEvent.message.is_echo) {
+    console.log(`🔄 Skipping echo message: ${messageId}`);
+    return;
+  }
+  
+  // Skip messages from the bot account itself
+  if (senderId === process.env.INSTAGRAM_ACCOUNT_ID) {
+    console.log(`🔄 Skipping message from bot account: ${senderId}`);
+    return;
+  }
+  
   // 🚫 DEDUPLICATION: Check if we've already processed this message
   if (processedMessages.has(messageId)) {
-    console.log(`🔄 DUPLICATE MESSAGE IGNORED: ${messageId} (already processed)`);
-    console.log(`📊 Cache size: ${processedMessages.size} messages`);
-    return; // Skip processing
+    console.log(`🔄 DUPLICATE MESSAGE IGNORED: ${messageId}`);
+    return; // Skip processing - no verbose logging for duplicates
   }
   
   // Add message ID to processed set
   processedMessages.add(messageId);
-  console.log(`✅ NEW MESSAGE ACCEPTED: ${messageId} (cache size: ${processedMessages.size})`);
+  console.log(`✅ NEW MESSAGE: ${messageId} from ${senderId}`);
   
   // Clean up old entries if cache is getting too large
   if (processedMessages.size > MESSAGE_CACHE_SIZE) {
@@ -162,23 +181,11 @@ const handleMessage = async (messageEvent) => {
     processedMessages.add(messageId); // Re-add current message
   }
   
-  console.log(`👤 Message Processing:`);
-  console.log(`  - From: ${senderId}`);
-  console.log(`  - To: ${recipientId}`);
-  console.log(`  - Timestamp: ${timestamp}`);
-  console.log(`  - Date: ${new Date(timestamp).toISOString()}`);
-  
-  // Skip echo messages (messages sent by the bot itself)
-  if (messageEvent.message && messageEvent.message.is_echo) {
-    console.log('🔄 Skipping echo message (bot\'s own message)');
-    return;
-  }
-  
-  // Skip messages from the bot account itself
-  if (senderId === process.env.INSTAGRAM_ACCOUNT_ID) {
-    console.log('🔄 Skipping message from bot account itself');
-    return;
-  }
+  // Only log detailed message info for actual new messages that will be processed
+  console.log(`🔍 [${new Date().toISOString()}] Processing Message:`);
+  console.log(`  - From: ${senderId} | To: ${recipientId}`);
+  console.log(`  - Timestamp: ${timestamp} | Date: ${new Date(timestamp).toISOString()}`);
+  console.log(`  - Message ID: ${messageId}`);
   
   // Check if message contains text
   if (messageEvent.message && messageEvent.message.text) {

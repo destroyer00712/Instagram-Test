@@ -714,34 +714,134 @@ Audio file to transcribe:`;
 };
 
 /**
+ * Clean and validate Instagram reel caption
+ */
+const cleanCaption = (rawCaption) => {
+  if (!rawCaption || typeof rawCaption !== 'string') {
+    return { cleaned: '', isSignificant: false, removed: [] };
+  }
+
+  console.log(`🧼 Cleaning caption: "${rawCaption.substring(0, 100)}${rawCaption.length > 100 ? '...' : ''}"`);
+
+  // Remove hashtags and capture them
+  const hashtagMatches = rawCaption.match(/#[\w\u0900-\u097F]+/g) || [];
+  let cleaned = rawCaption.replace(/#[\w\u0900-\u097F]+/g, '');
+
+  // Remove extra whitespace and newlines
+  cleaned = cleaned
+    .replace(/\s+/g, ' ')
+    .replace(/\n+/g, ' ')
+    .trim();
+
+  // Remove common social media patterns
+  const socialPatterns = [
+    /@[\w\u0900-\u097F]+/g, // Remove @mentions
+    /\b(like|share|comment|follow|subscribe)\b/gi, // Remove CTA words
+    /👆|👇|👈|👉|🔥|💯|❤️|😍|🤔|💪|🙏/g, // Remove common emojis
+  ];
+
+  socialPatterns.forEach(pattern => {
+    cleaned = cleaned.replace(pattern, '');
+  });
+
+  // Final cleanup
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+
+  // Determine if caption is significant enough for fact-checking
+  const isSignificant = cleaned.length >= 20 && // At least 20 characters
+                       !isOnlyCTA(cleaned) && // Not just promotional text
+                       hasSubstantialContent(cleaned); // Contains meaningful content
+
+  console.log(`✅ Caption cleaned: ${cleaned.length} chars, significant: ${isSignificant}`);
+  console.log(`🏷️ Removed ${hashtagMatches.length} hashtags: ${hashtagMatches.join(', ')}`);
+
+  return {
+    cleaned: cleaned,
+    isSignificant: isSignificant,
+    removed: hashtagMatches,
+    originalLength: rawCaption.length,
+    cleanedLength: cleaned.length
+  };
+};
+
+/**
+ * Check if caption is only promotional/CTA content
+ */
+const isOnlyCTA = (text) => {
+  const ctaPatterns = [
+    /^(like|share|comment|follow|subscribe|watch|check|visit)/i,
+    /(link in bio|swipe up|dm me|contact us)/i,
+    /^(what do you think|thoughts|agree)/i
+  ];
+  
+  return ctaPatterns.some(pattern => pattern.test(text.trim()));
+};
+
+/**
+ * Check if caption has substantial factual content
+ */
+const hasSubstantialContent = (text) => {
+  // Look for indicators of factual content
+  const factualIndicators = [
+    /\d+/, // Numbers
+    /(said|announced|reported|confirmed|denied|stated)/i, // News language
+    /(according to|sources|official|government|company)/i, // Authority references
+    /(breaking|news|update|latest|just in)/i, // News indicators
+    /\b(USD|INR|dollar|rupee|crore|lakh|million|billion)\b/i, // Financial terms
+    /\b(died|killed|arrested|acquired|bought|sold|merger|deal)\b/i // Newsworthy events
+  ];
+
+  return factualIndicators.some(pattern => pattern.test(text));
+};
+
+/**
  * Extract verifiable claim from video content using AI with enhanced context
  */
-const extractClaim = async (transcription, caption = '', videoAnalysis = null) => {
+const extractClaim = async (transcription, rawCaption = '', videoAnalysis = null) => {
   console.log(`🧠 Extracting verifiable claim from comprehensive content...`);
   
-  const prompt = `You are a fact-checking expert. Extract the most important FACTUAL CLAIM from this video content.
+  // Clean and validate caption
+  const captionInfo = cleanCaption(rawCaption);
+  const caption = captionInfo.cleaned;
+  
+  console.log(`📝 Caption analysis: ${captionInfo.cleanedLength}/${captionInfo.originalLength} chars, significant: ${captionInfo.isSignificant}`);
 
-VIDEO CAPTION: "${caption || 'No caption'}"
-VIDEO TRANSCRIPTION: "${transcription || 'No transcription available'}"
-VISUAL ANALYSIS: "${videoAnalysis?.analysis || 'No visual analysis available'}"
+  const prompt = `You are a fact-checking expert. Extract the most important FACTUAL CLAIM from this Instagram reel content.
+
+**CAPTION TEXT**: "${caption || 'No caption'}"
+**AUDIO TRANSCRIPTION**: "${transcription || 'No transcription available'}"
+**VISUAL ANALYSIS**: "${videoAnalysis?.analysis || 'No visual analysis available'}"
+
+**CAPTION IS ${captionInfo.isSignificant ? 'SIGNIFICANT' : 'NOT SIGNIFICANT'}** - ${captionInfo.isSignificant ? 'Give high priority to caption content' : 'Focus more on audio/video content'}
+
+${captionInfo.removed.length > 0 ? `**REMOVED HASHTAGS**: ${captionInfo.removed.join(', ')}` : ''}
+
+**CONTENT PRIORITIZATION**:
+${captionInfo.isSignificant ? 
+  '1. **CAPTION FIRST** - Extract claims primarily from caption text\n2. **AUDIO SECOND** - Use transcription to support/clarify caption\n3. **VISUAL THIRD** - Use visual analysis for context' :
+  '1. **AUDIO FIRST** - Focus on spoken claims from transcription\n2. **VISUAL SECOND** - Use visual cues and context\n3. **CAPTION THIRD** - Caption is not substantial enough for primary claims'}
 
 TASK: Find the single most important factual claim that can be verified. This should be:
 1. **A specific statement** about events, people, numbers, or facts
-2. **Verifiable** - something that can be checked against news sources
-3. **Important** - the main point of the video, not minor details
+2. **Verifiable** - something that can be checked against news sources  
+3. **Important** - the main point of the content, not minor details
 
 EXAMPLES OF GOOD CLAIMS:
-- "Adani bought land for 1 rupee"
-- "COVID vaccines contain microchips" 
+- "H1B visa fees increased to $100,000 annually"
+- "Adani bought land for 1 rupee per year" 
 - "Person X died yesterday"
 - "Company Y acquired Company Z for $1 billion"
+- "Government announced new policy on immigration"
 
 EXAMPLES TO IGNORE:
-- Opinions like "This policy is bad"
+- Opinions like "This policy is bad" 
 - Vague statements like "Things are getting worse"
 - Questions like "What do you think?"
+- Pure promotional content like "Like and subscribe"
 
-If NO verifiable factual claim is found, return: "No verifiable claim found"
+**IMPORTANT**: If the caption contains substantial factual information, prioritize it over audio transcription.
+
+If NO verifiable factual claim is found in any content, return: "No verifiable claim found"
 
 OUTPUT: Return only the extracted claim as plain text, nothing else.`;
 
@@ -846,11 +946,25 @@ const processInstagramReel = async (senderId, attachment) => {
   }
   
   const videoUrl = attachment.payload.url;
-  const caption = attachment.payload.title || '';
+  const rawCaption = attachment.payload.title || '';
   const fileName = `${reelId}_${uuidv4()}.mp4`;
   
   console.log(`📱 [${reelId}] Video URL: ${videoUrl}`);
-  console.log(`📝 [${reelId}] Caption: "${caption}"`);
+  console.log(`📝 [${reelId}] Raw Caption (${rawCaption.length} chars): "${rawCaption.substring(0, 150)}${rawCaption.length > 150 ? '...' : ''}"`);
+  
+  // Clean and analyze caption early to determine processing strategy
+  const captionInfo = cleanCaption(rawCaption);
+  console.log(`🧼 [${reelId}] Caption Analysis:`);
+  console.log(`   - Original: ${captionInfo.originalLength} chars`);
+  console.log(`   - Cleaned: ${captionInfo.cleanedLength} chars`);
+  console.log(`   - Significant: ${captionInfo.isSignificant ? 'YES' : 'NO'}`);
+  console.log(`   - Hashtags removed: ${captionInfo.removed.length}`);
+  
+  if (captionInfo.isSignificant) {
+    console.log(`✨ [${reelId}] CAPTION-PRIORITY processing: Caption contains substantial factual content`);
+  } else {
+    console.log(`🎵 [${reelId}] AUDIO-PRIORITY processing: Caption not significant, focusing on audio/video`);
+  }
   
   let videoPath = null;
   let audioPath = null;
@@ -882,16 +996,18 @@ const processInstagramReel = async (senderId, attachment) => {
     
     // STEP 4: Extract claim with full context (audio + video + caption)
     console.log(`🧠 [${reelId}] Extracting verifiable claim from ALL content...`);
-    const claim = await extractClaim(transcription, caption, videoAnalysis);
+    const claim = await extractClaim(transcription, rawCaption, videoAnalysis);
     
     if (claim === 'No verifiable claim found') {
       console.log(`❌ [${reelId}] No verifiable claims found in video`);
+      console.log(`📊 [${reelId}] Content Summary: Caption(${captionInfo.isSignificant ? 'significant' : 'not significant'}), Audio(${transcription.length} chars), Video(${videoAnalysis ? 'analyzed' : 'failed'})`);
       return {
         success: false,
         message: 'No verifiable claims found in this video to fact-check.',
         claim: claim,
         transcription: transcription,
         videoAnalysis: videoAnalysis,
+        captionInfo: captionInfo,
         reelId: reelId
       };
     }
@@ -900,7 +1016,7 @@ const processInstagramReel = async (senderId, attachment) => {
     
     // STEP 5: Fact-check using ONLY Google Custom Search + AI  
     console.log(`🔍 [${reelId}] Fact-checking with Google Custom Search...`);
-    const factCheckResults = await searchFactChecks(claim, videoUrl, caption, transcription);
+    const factCheckResults = await searchFactChecks(claim);
     
     if (factCheckResults.length === 0) {
       console.log(`⚠️ [${reelId}] No sources found for fact-checking`);
@@ -910,6 +1026,7 @@ const processInstagramReel = async (senderId, attachment) => {
         claim: claim,
         transcription: transcription,
         videoAnalysis: videoAnalysis,
+        captionInfo: captionInfo,
         reelId: reelId
       };
     }
@@ -928,7 +1045,9 @@ const processInstagramReel = async (senderId, attachment) => {
         claim: claim,
         analysis: analysis,
         transcription: transcription,
-        videoAnalysis: videoAnalysis
+        videoAnalysis: videoAnalysis,
+        captionInfo: captionInfo,
+        rawCaption: rawCaption
       },
       timestamp: Date.now(),
       reelId: reelId
@@ -952,6 +1071,7 @@ const processInstagramReel = async (senderId, attachment) => {
       claim: claim,
       transcription: transcription,
       videoAnalysis: videoAnalysis,
+      captionInfo: captionInfo,
       analysis: analysis,
       sources: factCheckResults.length,
       reelId: reelId
