@@ -2410,16 +2410,20 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
   let falseScore = 0, trueScore = 0, mixedScore = 0, totalWeight = 0;
   const analysisData = [];
   
-  console.log(`🎯 NEW WEIGHTING STRATEGY: Article content analysis prioritized, Google articles get EQUAL weight`);
+  console.log(`🎯 NEW WEIGHTING STRATEGY: Google search results get 95% weight as requested`);
   
   allSources.forEach((source, index) => {
     const publisherName = (source.publisher || 'Unknown').toLowerCase();
     let baseWeight = publisherWeights[publisherName] || 0.5;
     
-    // EQUAL WEIGHT for Google articles: Give them same credibility as established sources
+    // 95% WEIGHT for Google articles: Heavily prioritize Google search results
     if (source.sourceType === 'google_search') {
-      baseWeight = 0.8; // High base weight for Google search articles
-      console.log(`🔍 Google search article gets equal weight: ${source.publisher} (base weight: ${baseWeight})`);
+      baseWeight = 0.95; // 95% weight for Google search articles as requested
+      console.log(`🔍 Google search article gets 95% weight: ${source.publisher} (base weight: ${baseWeight})`);
+    } else {
+      // Traditional fact-check sources get only 5% weight
+      baseWeight = 0.05;
+      console.log(`📰 Traditional fact-check source gets 5% weight: ${source.publisher} (base weight: ${baseWeight})`);
     }
     
     // LATEST ARTICLE WEIGHTING - exponentially higher weight for recent articles
@@ -2646,99 +2650,91 @@ const generateRedditBasedSummary = (verdict, redditAnalysis, totalPosts) => {
  * Generate content-prioritized summary based on analysis (NEW: Emphasizes article content over verdicts)
  */
 const generateContentPrioritizedSummary = (verdict, confidence, sourceCount, articleAnalyses, latestArticleAnalysis, factCheckResults = null) => {
-  let summary = `📊 **CONTENT-PRIORITIZED ANALYSIS** (article content weighted higher than verdicts)\n\n`;
+  // NEW: Simple Google search-focused summary for Instagram (95% weight as requested)
+  // This summary won't be used in Instagram messages but is kept for system compatibility
   
-  const aiAnalysisCount = articleAnalyses.length;
-  const highConfidenceCount = articleAnalyses.filter(a => a.aiAnalysis?.confidence === 'HIGH').length;
+  // Find Google search results (95% weight sources)
+  const googleArticles = factCheckResults?.googleAgeAnalysis?.articlesWithContent || [];
   
-  if (aiAnalysisCount > 0) {
-    summary += `🤖 **AI Content Analysis**: Analyzed full content from ${aiAnalysisCount} article${aiAnalysisCount !== 1 ? 's' : ''}\n`;
+  if (googleArticles.length > 0) {
+    let summary = `🔍 Google search found ${googleArticles.length} relevant articles\n\n`;
     
-    if (highConfidenceCount > 0) {
-      summary += `🎯 **High Confidence**: ${highConfidenceCount} article${highConfidenceCount !== 1 ? 's' : ''} provided high-confidence analysis\n`;
-    }
+    // Show supporting sources
+    const supportingArticles = googleArticles.filter(article => {
+      if (!article.claimVerdict) return false;
+      switch (verdict) {
+        case 'True': return article.claimVerdict === 'TRUE';
+        case 'False': return article.claimVerdict === 'FALSE';
+        default: return false;
+      }
+    });
     
-    // Show breakdown of AI verdicts
-    const aiVerdicts = articleAnalyses.map(a => a.aiAnalysis?.verdict).filter(Boolean);
-    if (aiVerdicts.length > 1) {
-      const verdictCounts = aiVerdicts.reduce((acc, v) => {
-        acc[v] = (acc[v] || 0) + 1;
-        return acc;
-      }, {});
-      summary += `📈 **Content Verdict Distribution**: ${Object.entries(verdictCounts).map(([v, c]) => `${v}(${c})`).join(', ')}\n`;
-    }
-    summary += `\n`;
-  }
-  
-  if (latestArticleAnalysis && latestArticleAnalysis.aiAnalysis) {
-    const latestSource = latestArticleAnalysis.source;
-    const aiInference = latestArticleAnalysis.aiAnalysis;
-    
-    summary += `🔍 **Latest Article Deep-Dive**: ${latestSource.publisher} (${latestSource.reviewDate})\n`;
-    summary += `🤖 **AI Content Assessment**: ${aiInference.verdict} (${aiInference.confidence} confidence)\n`;
-    summary += `📋 **Evidence Found**: ${aiInference.evidence_summary}\n\n`;
-    
-    if (aiInference.key_facts && aiInference.key_facts.length > 0) {
-      summary += `🎯 **Key Facts from Latest Article**:\n`;
-      aiInference.key_facts.slice(0, 3).forEach((fact, index) => {
-        summary += `  ${index + 1}. ${fact}\n`;
+    if (supportingArticles.length > 0) {
+      summary += `📰 Sources that ${verdict === 'True' ? 'confirm' : 'contradict'} this claim:\n`;
+      supportingArticles.slice(0, 3).forEach((article, i) => {
+        summary += `${i + 1}. ${article.source}\n`;
       });
-      summary += `\n`;
-    }
-  }
-  
-  // Overall verdict with new emphasis
-  summary += `⭐ **FINAL VERDICT**: `;
-  switch (verdict) {
-    case 'True':
-      summary += `**CONFIRMED TRUE** - Article content analysis supports this claim`;
-      break;
-    case 'False':
-      summary += `**DEBUNKED FALSE** - Article content analysis contradicts this claim`;
-      break;
-    case 'Mixed':
-      summary += `**MIXED ACCURACY** - Article content shows partial truth with important caveats`;
-      break;
-    default:
-      summary += `**INCONCLUSIVE** - Article content insufficient to determine accuracy`;
-  }
-  
-  summary += `\n📈 **Confidence Level**: ${confidence}`;
-  
-  if (aiAnalysisCount > 0) {
-    summary += ` (Based on AI analysis of ${aiAnalysisCount} full article${aiAnalysisCount !== 1 ? 's' : ''})`;
-  }
-  
-  summary += `\n\n📚 **Analysis Method**: Content-first approach - article content prioritized over verdict labels`;
-  summary += `\n🔍 **Sources Analyzed**: ${sourceCount} total (${aiAnalysisCount} with full content analysis)`;
-  summary += `\n⚠️ **Reddit Weight**: 0 (Reddit analysis provided for context only when fact-check articles are present)`;
-  
-  // Add timeline search information if available
-  if (factCheckResults && factCheckResults.searchStrategy) {
-    summary += `\n🔍 **Search Strategy**: Found results using ${factCheckResults.searchStrategy.description} search`;
-    if (factCheckResults.totalStrategiesTried > 1) {
-      summary += ` (tried ${factCheckResults.totalStrategiesTried} timeline strategies)`;
-    }
-    
-    // NEW: Include Google age analysis information
-    if (factCheckResults.googleAgeAnalysis) {
-      const google = factCheckResults.googleAgeAnalysis;
-      if (google.estimatedAgeDays && google.confidence !== 'low') {
-        summary += `\n📅 **Claim Age**: ~${google.estimatedAgeDays} days old (${google.confidence} confidence from Google news analysis)`;
-        summary += `\n📰 **News Timeline**: ${google.totalArticles} articles found from ${google.timeline?.length || 1} different dates`;
-        if (google.sampleArticles && google.sampleArticles.length > 0) {
-          summary += `\n📋 **Key Sources**: ${google.sampleArticles.slice(0, 3).map(a => a.source).join(', ')}`;
-        }
-      } else if (google.totalArticles > 0) {
-        summary += `\n📰 **News Search**: Found ${google.totalArticles} articles, but age analysis inconclusive`;
-      } else {
-        summary += `\n🔍 **Age Detection**: Used video metadata (Google news search found no articles)`;
+      
+      // Add explanation from best source
+      const bestSource = supportingArticles.find(a => a.claimConfidence === 'high') || supportingArticles[0];
+      if (bestSource && bestSource.claimReasoning) {
+        summary += `\n💡 Key finding: ${bestSource.claimReasoning}\n`;
       }
     }
     
-    if (factCheckResults.estimatedVideoAge) {
-      summary += `\n📺 **Video Age**: ~${factCheckResults.estimatedVideoAge} days old (from metadata)`;
+    summary += `\n🎯 Final verdict: ${verdict} (${confidence} confidence)`;
+    summary += `\n📊 Based on 95% Google search weight as requested`;
+    
+    return summary;
+  }
+  
+  // Fallback for when no Google articles available
+  return `🔍 Checked ${sourceCount} sources\n📊 Verdict: ${verdict} (${confidence} confidence)\n📈 Based on available evidence`;
+};
+
+/**
+ * Generate Google search-focused summary for Instagram messages (95% weight as requested)
+ */
+const generateGoogleSearchSummary = (verdict, confidence, factCheckResults = null) => {
+  // Find Google search results (95% weight sources)
+  const googleArticles = factCheckResults?.googleAgeAnalysis?.articlesWithContent || [];
+  
+  if (googleArticles.length === 0) {
+    return `🔍 No Google search results available`;
+  }
+  
+  // Filter articles that support the verdict
+  const supportingArticles = googleArticles.filter(article => {
+    if (!article.claimVerdict) return false;
+    switch (verdict) {
+      case 'True': return article.claimVerdict === 'TRUE';
+      case 'False': return article.claimVerdict === 'FALSE';
+      case 'Mixed': return article.claimVerdict === 'MIXED' || article.claimVerdict === 'UNCLEAR';
+      default: return false;
     }
+  });
+  
+  let summary = `🔍 Found in ${supportingArticles.length} sources:\n`;
+  
+  // Show top 3 supporting sources
+  supportingArticles.slice(0, 3).forEach((article, i) => {
+    summary += `${i + 1}. ${article.source}\n`;
+  });
+  
+  // Add simple explanation based on verdict
+  summary += `\n📋 `;
+  switch (verdict) {
+    case 'False':
+      summary += `Multiple sources contradict this claim.`;
+      break;
+    case 'True':
+      summary += `Multiple sources confirm this claim.`;
+      break;
+    case 'Mixed':
+      summary += `Sources show mixed evidence on this claim.`;
+      break;
+    default:
+      summary += `Limited evidence available on this claim.`;
   }
   
   return summary;

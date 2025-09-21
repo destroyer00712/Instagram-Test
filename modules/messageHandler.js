@@ -101,37 +101,55 @@ Want to learn more about any specific service? Just ask! 😊`,
     }
     
     // Add claim (truncated if too long)
-    const shortClaim = claim.length > 100 ? claim.substring(0, 97) + '...' : claim;
+    const shortClaim = claim.length > 80 ? claim.substring(0, 77) + '...' : claim;
     message += `"${shortClaim}"\n\n`;
     
-    // Add concise summary based on analysis type
-    if (analysis.latestArticleAnalysis && analysis.latestArticleAnalysis.aiAnalysis) {
-      const aiAnalysis = analysis.latestArticleAnalysis.aiAnalysis;
-      message += `📰 Latest source: ${analysis.latestArticleAnalysis.source.publisher}\n`;
-      message += `🎯 AI Analysis: ${aiAnalysis.verdict}\n`;
-      if (aiAnalysis.evidence_summary && aiAnalysis.evidence_summary.length > 0) {
-        const shortEvidence = aiAnalysis.evidence_summary.substring(0, 150) + (aiAnalysis.evidence_summary.length > 150 ? '...' : '');
-        message += `📋 Evidence: ${shortEvidence}\n`;
-      }
+    // PRIORITY: Use Google search results (95% weight as requested)
+    if (analysis.googleSearchSummary) {
+      message += analysis.googleSearchSummary;
     } else {
-      // Fallback to basic summary
-      const sourcesCount = analysis.sources ? analysis.sources.length : 0;
-      message += `📊 Checked ${sourcesCount} sources\n`;
+      // Extract Google search info from analysis
+      const googleSources = [];
+      let explanation = '';
+      
+      // Get Google search results and create explanation
+      if (analysis.sources && analysis.sources.length > 0) {
+        // Find Google search sources
+        const allSources = analysis.sources.filter(s => s.sourceType === 'google_search' || !s.sourceType);
+        const topSources = allSources.slice(0, 3);
+        
+        if (topSources.length > 0) {
+          message += `🔍 Found in ${topSources.length} sources:\n`;
+          topSources.forEach((source, i) => {
+            const sourceName = source.publisherSite || source.publisher || 'Unknown';
+            message += `${i + 1}. ${sourceName}\n`;
+          });
+          
+          // Add simple explanation based on verdict
+          message += `\n📋 `;
+          switch (analysis.verdict) {
+            case 'False':
+              message += `Multiple sources contradict this claim.`;
+              break;
+            case 'True':
+              message += `Multiple sources confirm this claim.`;
+              break;
+            case 'Mixed':
+              message += `Sources show mixed evidence on this claim.`;
+              break;
+            default:
+              message += `Limited evidence available on this claim.`;
+          }
+        }
+      }
     }
     
-    message += `\n🎯 Confidence: ${analysis.confidence}`;
+    message += `\n\n🎯 Confidence: ${analysis.confidence}`;
     
-    // Add closing based on available characters
+    // Add closing if space allows
     const currentLength = message.length;
-    const remainingChars = 950 - currentLength; // Leave buffer for closing
-    
-    if (remainingChars > 100) {
-      message += `\n\n💬 Questions? Send another reel or ask "tell me more"!`;
-    } else if (remainingChars > 50) {
-      message += `\n\n💬 Questions? Ask me more!`;
-    } else {
-      // Very tight on space, minimal closing
-      message += `\n\n💬 Questions?`;
+    if (currentLength < 900) {
+      message += `\n\n💬 Ask "tell me more" for details!`;
     }
     
     // Final safety check - truncate if still too long
