@@ -6,15 +6,13 @@ An intelligent Instagram chatbot that automatically fact-checks videos, images, 
 
 **Watch the demo in action:**
 
-https://user-images.githubusercontent.com/your-user-id/ScreenRecording_09-21-2025%2022-47-04_1.MP4
+<video src="assets/demo/ScreenRecording_09-21-2025 22-47-04_1.MP4" controls width="800">
+  Your browser does not support the video tag.
+</video>
 
 *[Demo shows the bot receiving an Instagram message, processing a video, and providing fact-checked results]*
 
-> **Note**: To get the video displaying in GitHub:
-> 1. Upload the video to a GitHub issue or PR comment
-> 2. Copy the generated `user-images.githubusercontent.com` URL
-> 3. Replace the placeholder URL above with the real GitHub URL
-> 4. The video will then display directly in the README like the examples you showed
+> **Note**: Video file is currently 69MB. For GitHub display, compress to under 10MB or upload to YouTube and use thumbnail method.
 
 ## 🚀 Try It Live!
 
