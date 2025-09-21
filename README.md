@@ -6,7 +6,7 @@ An intelligent Instagram chatbot that automatically fact-checks videos, images, 
 
 **Watch the demo in action:**
 
-https://user-images.githubusercontent.com/6877923/115474571-03c75800-a23e-11eb-8096-8973aad5fa9f.mp4
+https://github.com/user-attachments/assets/453d9c6f-644d-4916-962b-22e574042fa9
 
 *[Demo shows the bot receiving an Instagram message, processing a video, and providing fact-checked results]*
 
