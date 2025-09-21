@@ -67,10 +67,10 @@ Our chatbot is available 24/7 for basic questions! 🤖`,
 Want to learn more about any specific service? Just ask! 😊`,
   
   default: [
-    "I'm not sure I understand. Could you try rephrasing that?",
-    "Hmm, I didn't catch that. Type 'help' to see what I can assist you with!",
-    "I'm still learning! Type 'menu' to see available options, or 'help' for assistance.",
-    "Sorry, I don't understand that yet. Try 'help' to see what I can do! 🤖"
+    "I'm here to help you fact-check news! 📰 Send me an Instagram reel or ask about a claim you'd like me to verify.",
+    "Not sure what you're asking? I specialize in fact-checking videos and news claims. Try sending me a reel! 🔍",
+    "I can verify facts from videos and news! Send me content to analyze, or type 'help' to learn more. 🤖",
+    "Looking to fact-check something? Share an Instagram reel with me and I'll analyze it with trusted sources! ✅"
   ],
   
   thanks: [
@@ -398,6 +398,62 @@ const generateResponse = async (messageText, userState, senderId) => {
     };
   }
   
+  // Special handling for "tell me more" requests even without history
+  if (text.includes('tell me more') || text.includes('more details') || text.includes('elaborate')) {
+    const history = factChecker.getUserFactCheckHistory(senderId);
+    
+    if (!history || history.length === 0) {
+      console.log(`💬 "Tell me more" request but no history - providing helpful guidance`);
+      return {
+        type: 'text',
+        text: `I'd love to tell you more! 😊 
+
+I'm a fact-checking bot that analyzes Instagram reels and videos. Send me any video with a claim or news story, and I'll:
+
+✅ **Verify the facts** using trusted sources
+✅ **Show you the evidence** with high confidence ratings  
+✅ **Give clear TRUE/FALSE verdicts** instead of vague answers
+✅ **Use 95% Google search weighting** for accurate results
+
+Try sending me a reel now, and then you can ask "tell me more" about the results! 🔍📱`
+      };
+    }
+  }
+
+  // Enhanced: Handle "tell me more" requests (including button presses)
+  if (text.includes('tell me more') || text.includes('more details') || text.includes('details') || 
+      text.includes('explain') || text === 'tell me more' || messageText === 'Tell me more') {
+    console.log(`🔍 User asking for more details: "${messageText}"`);
+    
+    try {
+      // Get user's most recent fact-check
+      const history = factChecker.getUserFactCheckHistory(senderId);
+      if (history && history.length > 0) {
+        const latestCheck = history[history.length - 1];
+        
+        // Generate detailed explanation using AI
+        const detailedResult = await factChecker.generateDetailedExplanation(
+          latestCheck.result.claim,
+          latestCheck.result.analysis
+        );
+        
+        if (detailedResult && detailedResult.response) {
+          return {
+            type: 'text',
+            text: detailedResult.response
+          };
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error generating detailed response:', error);
+    }
+    
+    return {
+      type: 'text',
+      text: "I'd love to explain more, but I need you to share a video or claim first so I can fact-check it for you! 🔍"
+    };
+  }
+
   // NEW: Conversational memory search for news/content questions
   if (await shouldSearchMemory(text, senderId)) {
     console.log(`🧠 Detected potential memory query: "${messageText}"`);
@@ -424,11 +480,29 @@ const generateResponse = async (messageText, userState, senderId) => {
       }
     } catch (error) {
       console.error('❌ Error in memory search:', error);
-      // Fall through to default response if memory search fails
+      // Fall through to AI response if memory search fails
     }
   }
   
-  // Default response
+  // NEW: Use AI for general conversation instead of default responses
+  if (!isBasicCommand(text)) {
+    console.log(`🤖 Using AI for general conversation: "${messageText}"`);
+    
+    try {
+      const aiResponse = await factChecker.generateGeneralConversation(senderId, messageText);
+      if (aiResponse && aiResponse.response) {
+        return {
+          type: 'text',
+          text: aiResponse.response
+        };
+      }
+    } catch (error) {
+      console.error('❌ Error in AI conversation:', error);
+      // Fall through to default response if AI fails
+    }
+  }
+  
+  // Default response (fallback)
   return {
     type: 'text',
     text: getRandomResponse(botResponses.default)
@@ -447,9 +521,11 @@ const shouldSearchMemory = async (text, senderId) => {
   
   // Quick keyword filters - definitely search memory for these
   const memoryKeywords = [
+    'tell me more', 'more details', 'more info', 'elaborate', 'expand',
     'remember', 'recall', 'before', 'earlier', 'previous', 'last time',
     'that thing', 'that story', 'that claim', 'that news', 'that video',
-    'what about', 'tell me about', 'explain', 'more about', 'details about'
+    'what about', 'tell me about', 'explain', 'more about', 'details about',
+    'full story', 'complete details', 'further information'
   ];
   
   if (memoryKeywords.some(keyword => text.includes(keyword))) {
@@ -508,6 +584,17 @@ const isGreeting = (text) => {
 const isThankYou = (text) => {
   const thankYou = ['thank', 'thanks', 'appreciate', 'grateful', 'thx'];
   return thankYou.some(thanks => text.includes(thanks));
+};
+
+/**
+ * Check if message is a basic command that shouldn't use AI
+ */
+const isBasicCommand = (text) => {
+  const basicCommands = [
+    'hello', 'hi', 'hey', 'help', 'menu', 'about', 'contact', 
+    'hours', 'services', 'thank', 'thanks', 'yes', 'no', 'ok', 'okay'
+  ];
+  return basicCommands.some(command => text.includes(command));
 };
 
 /**

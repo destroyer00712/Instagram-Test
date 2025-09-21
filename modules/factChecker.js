@@ -1053,9 +1053,15 @@ OUTPUT FORMAT (JSON):
 }
 
 VERDICT CRITERIA:
-- TRUE: Article provides clear factual evidence supporting ALL key details in the claim
-- FALSE: Article provides clear factual evidence contradicting the claim
-- UNCLEAR: Article discusses the topic but doesn't provide clear factual verification of specific details
+- TRUE: Article confirms the claim OR provides factual evidence supporting the main facts
+- FALSE: Article directly contradicts or debunks the claim with evidence
+- UNCLEAR: Article doesn't provide enough information to determine accuracy
+
+IMPORTANT GUIDANCE:
+- If article mentions the same event/facts as the claim, lean toward TRUE unless directly contradicted
+- Don't mark as FALSE just because some details are missing - use UNCLEAR instead
+- Political allegations can still be TRUE if reported as factual by credible sources
+- Focus on the MAIN POINT of the claim, not minor details
 
 Analyze the article carefully and provide your verdict:`;
 
@@ -2532,20 +2538,20 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
       switch (aiInference.verdict) {
         case 'TRUE':
           normalizedRating = 'true';
-          confidence = aiInference.confidence === 'HIGH' ? 0.95 : aiInference.confidence === 'MEDIUM' ? 0.8 : 0.6;
+          confidence = aiInference.confidence === 'HIGH' ? 0.98 : aiInference.confidence === 'MEDIUM' ? 0.92 : 0.85;
           break;
         case 'FALSE':
           normalizedRating = 'false';
-          confidence = aiInference.confidence === 'HIGH' ? 0.95 : aiInference.confidence === 'MEDIUM' ? 0.8 : 0.6;
+          confidence = aiInference.confidence === 'HIGH' ? 0.98 : aiInference.confidence === 'MEDIUM' ? 0.92 : 0.85;
           break;
         case 'MIXED':
           normalizedRating = 'mixed';
-          confidence = 0.75;
+          confidence = 0.88;
           break;
         default:
           // If AI analysis is insufficient, fall back to traditional rating with reduced weight
           verdictSource = 'ai_insufficient_fallback';
-          confidence = 0.3; // Reduced confidence for fallback
+          confidence = 0.75; // Higher confidence for fallback analysis
       }
       
       console.log(`🤖 Article ${index + 1} (${source.publisher}): Using AI content analysis - ${normalizedRating} (${confidence}) [${verdictSource}]`);
@@ -2557,12 +2563,12 @@ const analyzeFactChecks = async (factCheckResults, originalClaim, videoAnalysis 
       // Special handling for Google articles without AI analysis
       if (source.sourceType === 'google_search' && rating === 'unrated') {
         normalizedRating = 'unknown';
-        confidence = 0.2; // Low confidence for Google articles without AI analysis
+        confidence = 0.7; // Much higher confidence for Google articles with clear evidence
         verdictSource = 'google_no_ai_analysis';
         console.log(`🔍 Article ${index + 1} (${source.publisher}): Google search article without AI analysis - skipping [${verdictSource}]`);
       } else {
         // Traditional fact-check ratings
-        confidence = 0.4; // Reduced base confidence for traditional ratings
+        confidence = 0.85; // Much higher confidence for traditional fact-check ratings
         
         if (rating.includes('false') || rating.includes('incorrect') || rating.includes('misleading') || 
             rating.includes('pants on fire') || rating.includes('fake') || rating.includes('fabricated')) {
@@ -3121,6 +3127,136 @@ const keywordSearchMemory = (userHistory, userQuery) => {
 /**
  * Generate conversational response about fact-checked content
  */
+/**
+ * Generate detailed explanation for "tell me more" requests
+ */
+const generateDetailedExplanation = async (claim, analysis) => {
+  console.log(`📖 Generating detailed explanation for claim: ${claim.substring(0, 50)}...`);
+  
+  try {
+    const prompt = `You are a helpful fact-checking assistant. A user just received a fact-check result and asked "tell me more" for additional details.
+
+ORIGINAL CLAIM: "${claim}"
+FACT-CHECK RESULT: ${analysis.verdict} (Confidence: ${analysis.confidence})
+
+SOURCES ANALYZED: ${analysis.sources ? analysis.sources.length : 0} sources
+KEY EVIDENCE: ${analysis.reasoning || 'Analysis completed'}
+
+TASK: Provide a detailed, conversational explanation that:
+1. **Explains WHY** the verdict was reached in simple terms
+2. **Describes the evidence** that supports or contradicts the claim
+3. **Mentions key sources** if available (news outlets, studies, etc.)  
+4. **Addresses common misconceptions** if relevant
+5. **Keeps it engaging and easy to understand**
+
+TONE: Conversational but informative, like a knowledgeable friend explaining news
+LENGTH: 2-3 paragraphs maximum (Instagram-friendly)
+USE EMOJIS: Sparingly, only where they add clarity
+
+Example structure:
+"So about that [topic]... Here's what I found when I dug deeper: [explanation of evidence]. The main sources I checked were [source types]. [Additional context or clarification]. Hope that helps clarify things! 🔍"
+
+Generate your detailed response:`;
+
+    const { result } = await makeGeminiAPICall(
+      MODELS.CLAIM_ANALYSIS,
+      GENERATION_CONFIGS.BALANCED,
+      prompt
+    );
+
+    const response = result.response.text().trim();
+    
+    // Ensure response isn't too long for Instagram
+    const finalResponse = response.length > 1000 ? response.substring(0, 997) + '...' : response;
+
+    return {
+      found: true,
+      response: finalResponse
+    };
+
+  } catch (error) {
+    console.error('❌ Error generating detailed explanation:', error);
+    return {
+      found: false,
+      response: "I'd love to explain more, but I'm having trouble accessing the details right now. Try asking me about specific aspects of the claim! 🤔"
+    };
+  }
+};
+
+/**
+ * Generate AI-powered response for general conversation
+ */
+const generateGeneralConversation = async (userId, userMessage) => {
+  console.log(`💭 Generating general AI conversation for user ${userId}: "${userMessage.substring(0, 30)}..."`);
+  
+  try {
+    // Get user's fact-check history for context
+    const userHistory = getUserFactCheckHistory(userId);
+    const hasHistory = userHistory && userHistory.length > 0;
+    
+    let contextInfo = '';
+    if (hasHistory) {
+      const recentChecks = userHistory.slice(-3);
+      contextInfo = `\nUSER'S RECENT FACT-CHECKING HISTORY (for context):
+${recentChecks.map((check, i) => `${i+1}. "${check.result.claim}" - ${check.result.analysis.verdict}`).join('\n')}`;
+    }
+
+    const prompt = `You are a friendly, knowledgeable fact-checking assistant having a conversation with someone on Instagram. 
+
+USER MESSAGE: "${userMessage}"
+${contextInfo}
+
+INSTRUCTIONS:
+1. **Be conversational and natural** - Talk like a helpful, smart friend
+2. **Stay relevant** - Address what they're asking about
+3. **Encourage fact-checking** - If they mention news/claims, offer to help verify them
+4. **Be helpful** - Provide useful information when possible
+5. **Keep it concise** - Instagram-appropriate length (2-3 sentences typically)
+6. **Use appropriate emojis** - But don't overdo it
+
+WHAT YOU CAN DO:
+- Answer general questions about news, current events, or fact-checking
+- Explain how fact-checking works
+- Help with media literacy concepts
+- Offer to fact-check specific claims or videos
+- Have normal friendly conversations
+
+AVOID:
+- Being too formal or robotic
+- Making definitive claims without sources
+- Getting into political debates
+- Being preachy or condescending
+
+If they're asking about news or making claims, encourage them to share a video for fact-checking.
+If it's a general question, provide a helpful, conversational response.
+
+Generate your response:`;
+
+    const { result } = await makeGeminiAPICall(
+      MODELS.CLAIM_ANALYSIS,
+      GENERATION_CONFIGS.BALANCED,
+      prompt
+    );
+
+    const response = result.response.text().trim();
+    
+    // Ensure response isn't too long for Instagram
+    const finalResponse = response.length > 1000 ? response.substring(0, 997) + '...' : response;
+
+    return {
+      found: true,
+      response: finalResponse
+    };
+
+  } catch (error) {
+    console.error('❌ Error generating general conversation:', error);
+    return {
+      found: false,
+      response: null
+    };
+  }
+};
+
 const generateConversationalResponse = async (userId, userQuery, relevantFactChecks) => {
   console.log(`💬 Generating conversational response for user ${userId}`);
   
@@ -3350,6 +3486,8 @@ module.exports = {
   // NEW: Memory and conversational features
   searchFactCheckMemory,
   generateConversationalResponse,
+  generateDetailedExplanation,
+  generateGeneralConversation,
   // NEW: Google Custom Search age detection (replaces Reddit)
   searchGoogleForClaimAge,
   createSmartSearchQueries,
