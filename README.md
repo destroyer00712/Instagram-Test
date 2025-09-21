@@ -6,13 +6,11 @@ An intelligent Instagram chatbot that automatically fact-checks videos, images, 
 
 **Watch the demo in action:**
 
-<video src="assets/demo/ScreenRecording_09-21-2025 22-47-04_1.MP4" controls width="800">
+<video src="assets/demo/demo.mp4" controls width="800">
   Your browser does not support the video tag.
 </video>
 
 *[Demo shows the bot receiving an Instagram message, processing a video, and providing fact-checked results]*
-
-> **Note**: Video file is currently 69MB. For GitHub display, compress to under 10MB or upload to YouTube and use thumbnail method.
 
 ## 🚀 Try It Live!
 
