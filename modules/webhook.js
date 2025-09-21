@@ -48,7 +48,7 @@ const verify = (req, res) => {
  * Webhook message receiver
  * This handles incoming Instagram messages
  */
-const receive = (req, res) => {
+const receive = async (req, res) => {
   console.log(`📨 [${new Date().toISOString()}] Webhook message received`);
   console.log('🔍 Request Details:');
   console.log('  - Method:', req.method);
@@ -69,19 +69,19 @@ const receive = (req, res) => {
     // Signature verification removed for debugging
     
     // Iterate over each entry - there may be multiple if batched
-    body.entry.forEach((entry, entryIndex) => {
+    for (const [entryIndex, entry] of body.entry.entries()) {
       console.log(`🔄 Processing entry ${entryIndex + 1}:`, JSON.stringify(entry, null, 2));
       
       if (entry.messaging) {
         console.log(`  - Found ${entry.messaging.length} messaging events`);
-        entry.messaging.forEach((messageEvent, messageIndex) => {
+        for (const [messageIndex, messageEvent] of entry.messaging.entries()) {
           console.log(`📋 Processing message event ${messageIndex + 1}:`, JSON.stringify(messageEvent, null, 2));
-          handleMessage(messageEvent);
-        });
+          await handleMessage(messageEvent);
+        }
       } else {
         console.log('  - No messaging events found in entry');
       }
-    });
+    }
     
     // Return a '200 OK' response to acknowledge receipt
     console.log('✅ Sending EVENT_RECEIVED response');
@@ -123,7 +123,7 @@ const verifySignature = (req) => {
 /**
  * Handle incoming message
  */
-const handleMessage = (messageEvent) => {
+const handleMessage = async (messageEvent) => {
   console.log(`🔍 [${new Date().toISOString()}] Message Event Details:`, JSON.stringify(messageEvent, null, 2));
   
   const senderId = messageEvent.sender ? messageEvent.sender.id : 'unknown';
