@@ -488,7 +488,299 @@ const analyzeFactChecks = async (factCheckResults, originalClaim) => {
 };
 
 /**
- * Extract claim from Instagram reel caption using AI
+ * Download video from Instagram URL
+ */
+const downloadVideo = async (videoUrl, fileName) => {
+  console.log(`🎥 Downloading video from: ${videoUrl}`);
+  
+  // Ensure temp directory exists
+  const tempDir = process.env.TEMP_VIDEO_DIR || './temp/videos/';
+  await fs.ensureDir(tempDir);
+  
+  const filePath = path.join(tempDir, fileName);
+  
+  try {
+    const response = await axios({
+      method: 'GET',
+      url: videoUrl,
+      responseType: 'stream',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+    
+    const writer = fs.createWriteStream(filePath);
+    response.data.pipe(writer);
+    
+    return new Promise((resolve, reject) => {
+      writer.on('finish', () => {
+        console.log(`✅ Video downloaded: ${filePath}`);
+        resolve(filePath);
+      });
+      writer.on('error', reject);
+    });
+  } catch (error) {
+    console.error('❌ Error downloading video:', error);
+    throw error;
+  }
+};
+
+/**
+ * Extract video frames for analysis
+ */
+const extractVideoFrames = async (videoPath, frameCount = 5) => {
+  console.log(`🖼️ Extracting ${frameCount} frames from: ${videoPath}`);
+  
+  const framesDir = process.env.TEMP_FRAMES_DIR || './temp/frames/';
+  await fs.ensureDir(framesDir);
+  
+  const framePattern = path.join(framesDir, `${uuidv4()}_frame_%03d.jpg`);
+  
+  return new Promise((resolve, reject) => {
+    ffmpeg(videoPath)
+      .screenshots({
+        count: frameCount,
+        folder: framesDir,
+        filename: `${uuidv4()}_frame_%03d.jpg`,
+        size: '1280x720' // Standard HD resolution for analysis
+      })
+      .on('end', () => {
+        // Get the generated frame files
+        const frameFiles = [];
+        for (let i = 1; i <= frameCount; i++) {
+          const paddedNum = i.toString().padStart(3, '0');
+          const framePath = framePattern.replace('%03d', paddedNum);
+          if (fs.existsSync(framePath)) {
+            frameFiles.push(framePath);
+          }
+        }
+        console.log(`✅ Extracted ${frameFiles.length} frames`);
+        resolve(frameFiles);
+      })
+      .on('error', (error) => {
+        console.error('❌ Error extracting frames:', error);
+        reject(error);
+      });
+  });
+};
+
+/**
+ * Extract audio from video file
+ */
+const extractAudio = async (videoPath) => {
+  console.log(`🎵 Extracting audio from: ${videoPath}`);
+  
+  const audioDir = process.env.TEMP_AUDIO_DIR || './temp/audio/';
+  await fs.ensureDir(audioDir);
+  
+  const audioPath = path.join(audioDir, `${uuidv4()}.mp3`);
+  
+  return new Promise((resolve, reject) => {
+    ffmpeg(videoPath)
+      .toFormat('mp3')
+      .on('end', () => {
+        console.log(`✅ Audio extracted: ${audioPath}`);
+        resolve(audioPath);
+      })
+      .on('error', (error) => {
+        console.error('❌ Error extracting audio:', error);
+        reject(error);
+      })
+      .save(audioPath);
+  });
+};
+
+/**
+ * Analyze video frames to generate comprehensive visual description
+ */
+const analyzeVideoFrames = async (framePaths, transcription = '') => {
+  console.log(`🎬 Analyzing ${framePaths.length} video frames for visual context...`);
+  
+  try {
+    // Prepare frame data for analysis
+    const frameData = [];
+    for (const framePath of framePaths) {
+      try {
+        const frameBuffer = await fs.readFile(framePath);
+        frameData.push({
+          inlineData: {
+            data: frameBuffer.toString('base64'),
+            mimeType: 'image/jpeg'
+          }
+        });
+      } catch (error) {
+        console.error(`❌ Error reading frame ${framePath}:`, error);
+      }
+    }
+    
+    if (frameData.length === 0) {
+      console.log('⚠️ No frames available for analysis');
+      return null;
+    }
+    
+    const prompt = `You are an expert video analyst. Analyze these video frames and provide comprehensive visual context that could be relevant for fact-checking.
+
+AUDIO TRANSCRIPTION (if available): "${transcription || 'No transcription available'}"
+
+Please provide a detailed analysis covering:
+
+1. **VISUAL CONTENT**: What do you see in these frames?
+2. **TEXT/GRAPHICS**: Any visible text, captions, or graphics in the video?
+3. **SETTING/LOCATION**: Where does this appear to be filmed?
+4. **PEOPLE**: Who appears in the video? (describe without naming unless text identifies them)
+5. **ACTIONS**: What activities or events are shown?
+6. **CREDIBILITY INDICATORS**: Does this look like news footage, amateur video, staged content, etc.?
+7. **FACT-CHECK RELEVANCE**: What visual elements could help verify or contradict potential claims?
+
+Be specific and factual. Focus on what you can definitively observe.`;
+
+    const { result } = await makeGeminiAPICall(
+      MODELS.VISUAL_ANALYSIS,
+      GENERATION_CONFIGS.HIGH_ACCURACY, 
+      prompt,
+      frameData
+    );
+    
+    const videoAnalysis = result.response.text().trim();
+    console.log(`✅ Video analysis complete (${videoAnalysis.length} chars)`);
+    
+    return {
+      frameCount: framePaths.length,
+      analysis: videoAnalysis,
+      transcriptionIncluded: !!transcription
+    };
+  } catch (error) {
+    console.error('❌ Error analyzing video frames:', error);
+    return null;
+  }
+};
+
+/**
+ * Transcribe audio using Gemini AI with enhanced accuracy
+ */
+const transcribeAudio = async (audioPath) => {
+  console.log(`🎤 Transcribing audio: ${audioPath}`);
+  
+  try {
+    // Read audio file as buffer
+    const audioBuffer = await fs.readFile(audioPath);
+    console.log(`📊 Audio buffer size: ${audioBuffer.length} bytes`);
+    
+    const prompt = `You are a professional transcriptionist with expertise in accurate speech-to-text conversion. Your task is to transcribe this audio file with the highest possible accuracy.
+
+INSTRUCTIONS:
+1. Transcribe ALL spoken words exactly as heard
+2. Include natural speech patterns (um, uh, etc.) if present
+3. Use proper punctuation and capitalization
+4. If multiple speakers, indicate with [Speaker 1], [Speaker 2], etc.
+5. For unclear words, use [inaudible] rather than guessing
+6. Maintain the exact timing and flow of speech
+7. Do not add interpretations, summaries, or commentary
+8. If background music or sounds interfere, focus only on clear speech
+
+CRITICAL: Return ONLY the transcription text. No prefixes, explanations, or additional commentary.
+
+Audio file to transcribe:`;
+    
+    const additionalContent = [{
+        inlineData: {
+          data: audioBuffer.toString('base64'),
+          mimeType: 'audio/mp3'
+        }
+    }];
+    
+    const { result } = await makeGeminiAPICall(
+      MODELS.TRANSCRIPTION,
+      GENERATION_CONFIGS.HIGH_ACCURACY,
+      prompt,
+      additionalContent
+    );
+    
+    const transcription = result.response.text().trim();
+    console.log(`✅ Audio transcribed (${transcription.length} chars): ${transcription.substring(0, 100)}${transcription.length > 100 ? '...' : ''}`);
+    
+    // Basic validation
+    if (transcription.length < 3) {
+      console.log('⚠️ Very short transcription, audio may be unclear');
+    }
+    
+    return transcription;
+  } catch (error) {
+    console.error('❌ Error transcribing audio:', error);
+    throw error;
+  }
+};
+
+/**
+ * Extract verifiable claim from video content using AI with enhanced context
+ */
+const extractClaim = async (transcription, caption = '', videoAnalysis = null) => {
+  console.log(`🧠 Extracting verifiable claim from comprehensive content...`);
+  
+  const prompt = `You are a fact-checking expert. Extract the most important FACTUAL CLAIM from this video content.
+
+VIDEO CAPTION: "${caption || 'No caption'}"
+VIDEO TRANSCRIPTION: "${transcription || 'No transcription available'}"
+VISUAL ANALYSIS: "${videoAnalysis?.analysis || 'No visual analysis available'}"
+
+TASK: Find the single most important factual claim that can be verified. This should be:
+1. **A specific statement** about events, people, numbers, or facts
+2. **Verifiable** - something that can be checked against news sources
+3. **Important** - the main point of the video, not minor details
+
+EXAMPLES OF GOOD CLAIMS:
+- "Adani bought land for 1 rupee"
+- "COVID vaccines contain microchips" 
+- "Person X died yesterday"
+- "Company Y acquired Company Z for $1 billion"
+
+EXAMPLES TO IGNORE:
+- Opinions like "This policy is bad"
+- Vague statements like "Things are getting worse"
+- Questions like "What do you think?"
+
+If NO verifiable factual claim is found, return: "No verifiable claim found"
+
+OUTPUT: Return only the extracted claim as plain text, nothing else.`;
+
+  try {
+    const { result } = await makeGeminiAPICall(
+      MODELS.CLAIM_ANALYSIS,
+      GENERATION_CONFIGS.HIGH_ACCURACY,
+      prompt
+    );
+
+    const extractedClaim = result.response.text().trim();
+    
+    console.log(`✅ Extracted claim: "${extractedClaim}"`);
+    return extractedClaim;
+    
+  } catch (error) {
+    console.log(`❌ Claim extraction failed: ${error.message}`);
+    return 'No verifiable claim found';
+  }
+};
+
+/**
+ * Cleanup temporary files
+ */
+const cleanupFiles = async (...filePaths) => {
+  console.log(`🧹 Cleaning up temporary files...`);
+  
+  for (const filePath of filePaths) {
+    try {
+      if (await fs.pathExists(filePath)) {
+        await fs.remove(filePath);
+        console.log(`✅ Deleted: ${filePath}`);
+      }
+    } catch (error) {
+      console.error(`❌ Error deleting ${filePath}:`, error.message);
+    }
+  }
+};
+
+/**
+ * Extract claim from Instagram reel caption using AI (LEGACY - kept for compatibility)
  */
 const extractClaimFromReel = async (caption, videoUrl = '') => {
   console.log(`🧠 Extracting claim from Instagram reel...`);
@@ -539,13 +831,13 @@ OUTPUT: Return only the extracted claim as plain text.`;
 };
 
 /**
- * SIMPLIFIED: Process Instagram reel using ONLY Google Custom Search + AI
+ * COMPREHENSIVE: Process Instagram reel with full video/audio analysis + Google Custom Search
  */
 const processInstagramReel = async (senderId, attachment) => {
   const reelId = uuidv4().substring(0, 8);
   
-  console.log(`🎬 [${reelId}] SIMPLIFIED Instagram reel processing for user: ${senderId}`);
-  console.log(`📱 [${reelId}] Using ONLY Google Custom Search + AI (no Reddit, no fact-check APIs)`);
+  console.log(`🎬 [${reelId}] COMPREHENSIVE Instagram reel processing for user: ${senderId}`);
+  console.log(`📱 [${reelId}] Video + Audio + Google Custom Search (no Reddit, no broken APIs)`);
   
   if (attachment.type !== 'ig_reel' || !attachment.payload?.url) {
     throw new Error(`[${reelId}] Invalid Instagram reel attachment`);
@@ -553,53 +845,88 @@ const processInstagramReel = async (senderId, attachment) => {
   
   const videoUrl = attachment.payload.url;
   const caption = attachment.payload.title || '';
+  const fileName = `${reelId}_${uuidv4()}.mp4`;
   
+  console.log(`📱 [${reelId}] Video URL: ${videoUrl}`);
   console.log(`📝 [${reelId}] Caption: "${caption}"`);
   
+  let videoPath = null;
+  let audioPath = null;
+  let framePaths = [];
+  
   try {
-    // STEP 1: Extract claim from reel caption
-    console.log(`🧠 [${reelId}] Extracting verifiable claim...`);
-    const claim = await extractClaimFromReel(caption, videoUrl);
+    // STEP 1: Download video
+    console.log(`⬇️ [${reelId}] Downloading video...`);
+    videoPath = await downloadVideo(videoUrl, fileName);
+    
+    // STEP 2: Extract audio and video frames in parallel 
+    console.log(`🔄 [${reelId}] Extracting audio and video frames in parallel...`);
+    const [audioPath_result, framePaths_result] = await Promise.all([
+      extractAudio(videoPath),
+      extractVideoFrames(videoPath, 5)
+    ]);
+    audioPath = audioPath_result;
+    framePaths = framePaths_result;
+    
+    // STEP 3: Transcribe audio and analyze video frames in parallel
+    console.log(`🎤 [${reelId}] Transcribing audio and analyzing video frames...`);
+    const [transcription, videoAnalysis] = await Promise.all([
+      transcribeAudio(audioPath),
+      analyzeVideoFrames(framePaths)
+    ]);
+    
+    console.log(`✅ [${reelId}] Transcription (${transcription.length} chars): "${transcription.substring(0, 100)}${transcription.length > 100 ? '...' : ''}"`);
+    console.log(`✅ [${reelId}] Video analysis: ${videoAnalysis ? 'COMPLETE' : 'FAILED'}`);
+    
+    // STEP 4: Extract claim with full context (audio + video + caption)
+    console.log(`🧠 [${reelId}] Extracting verifiable claim from ALL content...`);
+    const claim = await extractClaim(transcription, caption, videoAnalysis);
     
     if (claim === 'No verifiable claim found') {
-      console.log(`❌ [${reelId}] No verifiable claims found`);
+      console.log(`❌ [${reelId}] No verifiable claims found in video`);
       return {
         success: false,
-        message: 'No verifiable claims found in this reel to fact-check.',
+        message: 'No verifiable claims found in this video to fact-check.',
         claim: claim,
+        transcription: transcription,
+        videoAnalysis: videoAnalysis,
         reelId: reelId
       };
     }
     
-    console.log(`✅ [${reelId}] Found claim: "${claim}"`);
+    console.log(`✅ [${reelId}] Extracted claim: "${claim}"`);
     
-    // STEP 2: Fact-check using ONLY Google Custom Search + AI
+    // STEP 5: Fact-check using ONLY Google Custom Search + AI  
     console.log(`🔍 [${reelId}] Fact-checking with Google Custom Search...`);
-    const factCheckResults = await searchFactChecks(claim);
+    const factCheckResults = await searchFactChecks(claim, videoUrl, caption, transcription);
     
     if (factCheckResults.length === 0) {
-      console.log(`⚠️ [${reelId}] No sources found`);
+      console.log(`⚠️ [${reelId}] No sources found for fact-checking`);
       return {
         success: false,
         message: 'No reliable sources found to verify this claim.',
         claim: claim,
+        transcription: transcription,
+        videoAnalysis: videoAnalysis,
         reelId: reelId
       };
     }
     
     console.log(`📊 [${reelId}] Found ${factCheckResults.length} sources, analyzing...`);
     
-    // STEP 3: Analyze results (NO Reddit, NO old fact-check APIs)
-    const analysis = await analyzeFactChecks(factCheckResults, claim);
+    // STEP 6: Enhanced analysis with video context
+    const analysis = await analyzeFactChecks(factCheckResults, claim, videoAnalysis);
     
     console.log(`✅ [${reelId}] COMPLETE: ${analysis.verdict} (${analysis.confidence})`);
     
-    // STEP 4: Store in user history
+    // STEP 7: Store comprehensive result in user history
     const factCheckRecord = {
       userId: senderId,
       result: {
         claim: claim,
-        analysis: analysis
+        analysis: analysis,
+        transcription: transcription,
+        videoAnalysis: videoAnalysis
       },
       timestamp: Date.now(),
       reelId: reelId
@@ -616,28 +943,45 @@ const processInstagramReel = async (senderId, attachment) => {
       userHistory.splice(0, userHistory.length - 50);
     }
     
-    console.log(`💾 [${reelId}] Stored in user history`);
+    console.log(`💾 [${reelId}] Stored comprehensive result in user history`);
     
     return {
       success: true,
       claim: claim,
+      transcription: transcription,
+      videoAnalysis: videoAnalysis,
       analysis: analysis,
       sources: factCheckResults.length,
       reelId: reelId
     };
     
   } catch (error) {
-    console.error(`❌ [${reelId}] Error:`, error);
+    console.error(`❌ [${reelId}] Error processing reel:`, error);
     throw error;
+  } finally {
+    // STEP 8: Cleanup temporary files
+    const filesToCleanup = [videoPath, audioPath, ...framePaths].filter(Boolean);
+    if (filesToCleanup.length > 0) {
+      console.log(`🧹 [${reelId}] Cleaning up ${filesToCleanup.length} temporary files...`);
+      await cleanupFiles(...filesToCleanup);
+    }
   }
 };
 
-// Export the essential functions for the Instagram webhook
+// Export the comprehensive functions for the Instagram webhook
 module.exports = {
   searchFactChecks,
   analyzeFactChecks,
-  processInstagramReel,  // NEW: Simplified version for Instagram webhook
+  processInstagramReel,  // NEW: Comprehensive version with video/audio analysis + Google Custom Search
   makeGeminiAPICall,
+  // Video/Audio processing functions
+  downloadVideo,
+  extractAudio,
+  extractVideoFrames,
+  transcribeAudio,
+  analyzeVideoFrames,
+  extractClaim,
+  cleanupFiles,
   // Compatibility functions
   getUserFactCheckHistory: (userId) => factCheckMemory.get(userId) || [],
   generateDetailedExplanation: async (claim, analysis) => ({ 
@@ -646,7 +990,7 @@ module.exports = {
   }),
   generateGeneralConversation: async (userId, message) => ({ 
     found: true, 
-    response: "I'm a fact-checking bot! Share an Instagram reel with claims and I'll verify them using Google Custom Search. You can also ask me about previous fact-checks." 
+    response: "I'm a fact-checking bot! Share an Instagram reel with claims and I'll verify them using comprehensive video/audio analysis and Google Custom Search. You can also ask me about previous fact-checks." 
   }),
   generateConversationalResponse: async (userId, query, checks) => ({ 
     found: true, 
@@ -656,7 +1000,8 @@ module.exports = {
     const history = factCheckMemory.get(userId) || [];
     return history.filter(check => 
       check.result.claim.toLowerCase().includes(query.toLowerCase()) ||
-      check.result.analysis.summary?.toLowerCase().includes(query.toLowerCase())
+      check.result.analysis.summary?.toLowerCase().includes(query.toLowerCase()) ||
+      (check.result.transcription && check.result.transcription.toLowerCase().includes(query.toLowerCase()))
     );
   }
 };
