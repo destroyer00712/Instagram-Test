@@ -10,11 +10,11 @@ https://user-images.githubusercontent.com/your-user-id/ScreenRecording_09-21-202
 
 *[Demo shows the bot receiving an Instagram message, processing a video, and providing fact-checked results]*
 
-> **Note**: To display the video in GitHub README:
-> 1. Upload the video to an issue or PR comment first
-> 2. Copy the generated URL from GitHub
-> 3. Replace the URL above with the GitHub-generated URL
-> 4. Alternatively, [download the video directly](assets/demo/ScreenRecording_09-21-2025%2022-47-04_1.MP4)
+> **Note**: To get the video displaying in GitHub:
+> 1. Upload the video to a GitHub issue or PR comment
+> 2. Copy the generated `user-images.githubusercontent.com` URL
+> 3. Replace the placeholder URL above with the real GitHub URL
+> 4. The video will then display directly in the README like the examples you showed
 
 ## 🚀 Try It Live!
 
