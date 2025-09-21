@@ -283,18 +283,18 @@ const searchFactChecks = async (claim) => {
   for (const query of searchQueries.slice(0, 3)) { // Limit to 3 queries
     try {
       console.log(`🌐 Searching Google: "${query}"`);
-      
-      const searchUrl = 'https://www.googleapis.com/customsearch/v1';
-      const params = {
-        key: process.env.GOOGLE_CUSTOM_SEARCH_API_KEY,
-        cx: process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID,
+        
+        const searchUrl = 'https://www.googleapis.com/customsearch/v1';
+        const params = {
+          key: process.env.GOOGLE_CUSTOM_SEARCH_API_KEY,
+          cx: process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID,
         q: query,
         num: 5,
         tbm: 'nws' // News search
-      };
-      
-      const response = await axios.get(searchUrl, { params, timeout: 10000 });
-      
+        };
+        
+        const response = await axios.get(searchUrl, { params, timeout: 10000 });
+        
       if (response.data.items && response.data.items.length > 0) {
         console.log(`✅ Found ${response.data.items.length} articles`);
         
@@ -302,8 +302,8 @@ const searchFactChecks = async (claim) => {
         for (const item of response.data.items.slice(0, 3)) { // Top 3 articles per query
           try {
             console.log(`📰 Processing: ${item.title}`);
-            
-            // Scrape article content
+              
+              // Scrape article content
             const content = await scrapeArticleContent(item.link, item.title);
             
             if (content && content.length > 100) {
@@ -315,7 +315,7 @@ const searchFactChecks = async (claim) => {
                 claim: claim,
                 publisher: item.displayLink || 'Unknown',
                 url: item.link,
-                title: item.title,
+                    title: item.title,
                 snippet: item.snippet || '',
                 rating: mapVerdictToRating(analysis.verdict),
                 date: new Date().toISOString(),
@@ -326,13 +326,13 @@ const searchFactChecks = async (claim) => {
               allResults.push(result);
               console.log(`✅ Added result: ${analysis.verdict} from ${result.publisher}`);
               
-    } else {
+                } else {
               console.log(`⚠️ Skipping - insufficient content`);
             }
             
             // Small delay between articles
-            await new Promise(resolve => setTimeout(resolve, 500));
-            
+              await new Promise(resolve => setTimeout(resolve, 500));
+              
           } catch (articleError) {
             console.log(`❌ Error processing article: ${articleError.message}`);
           }
@@ -342,8 +342,8 @@ const searchFactChecks = async (claim) => {
       }
       
       // Delay between queries
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
     } catch (searchError) {
       console.log(`❌ Search error for "${query}": ${searchError.message}`);
     }
@@ -373,7 +373,7 @@ const analyzeFactChecks = async (factCheckResults, originalClaim) => {
   console.log(`📊 SIMPLE ANALYSIS: Processing ${factCheckResults.length} Google Custom Search results`);
   
   if (!factCheckResults || factCheckResults.length === 0) {
-    return {
+      return {
       verdict: 'Unknown',
       confidence: 'Low',
       summary: 'No relevant articles found to verify this claim.',
@@ -506,7 +506,7 @@ const downloadVideo = async (videoUrl, fileName) => {
       method: 'GET',
       url: videoUrl,
       responseType: 'stream',
-      headers: {
+            headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
       }
     });
@@ -521,7 +521,7 @@ const downloadVideo = async (videoUrl, fileName) => {
       });
       writer.on('error', reject);
     });
-  } catch (error) {
+        } catch (error) {
     console.error('❌ Error downloading video:', error);
     throw error;
   }
@@ -610,7 +610,7 @@ const analyzeVideoFrames = async (framePaths, transcription = '') => {
             mimeType: 'image/jpeg'
           }
         });
-      } catch (error) {
+        } catch (error) {
         console.error(`❌ Error reading frame ${framePath}:`, error);
       }
     }
@@ -645,8 +645,8 @@ Be specific and factual. Focus on what you can definitively observe.`;
     
     const videoAnalysis = result.response.text().trim();
     console.log(`✅ Video analysis complete (${videoAnalysis.length} chars)`);
-    
-    return {
+  
+  return { 
       frameCount: framePaths.length,
       analysis: videoAnalysis,
       transcriptionIncluded: !!transcription
@@ -751,7 +751,7 @@ OUTPUT: Return only the extracted claim as plain text, nothing else.`;
       GENERATION_CONFIGS.HIGH_ACCURACY,
       prompt
     );
-
+    
     const extractedClaim = result.response.text().trim();
     
     console.log(`✅ Extracted claim: "${extractedClaim}"`);
@@ -774,8 +774,8 @@ const cleanupFiles = async (...filePaths) => {
       if (await fs.pathExists(filePath)) {
         await fs.remove(filePath);
         console.log(`✅ Deleted: ${filePath}`);
-      }
-    } catch (error) {
+    }
+  } catch (error) {
       console.error(`❌ Error deleting ${filePath}:`, error.message);
     }
   }
@@ -821,7 +821,7 @@ OUTPUT: Return only the extracted claim as plain text.`;
       GENERATION_CONFIGS.HIGH_ACCURACY,
       prompt
     );
-
+    
     const claim = result.response.text().trim();
     console.log(`✅ Extracted claim: "${claim}"`);
     return claim;
@@ -986,10 +986,60 @@ module.exports = {
   cleanupFiles,
   // Compatibility functions
   getUserFactCheckHistory: (userId) => factCheckMemory.get(userId) || [],
-  generateDetailedExplanation: async (claim, analysis) => ({ 
-    found: true, 
-    response: `Here's more detail about "${claim}": ${analysis.summary || 'The claim was analyzed using Google Custom Search and AI.'} Confidence: ${analysis.confidence}.` 
-  }),
+  generateDetailedExplanation: async (claim, analysis) => {
+    console.log(`🔍 Generating detailed explanation for: "${claim}"`);
+    
+    try {
+      const prompt = `You are a professional fact-checker explaining results to a curious person. Create a detailed, human-friendly explanation for this fact-check.
+
+CLAIM: "${claim}"
+VERDICT: ${analysis.verdict} 
+CONFIDENCE: ${analysis.confidence}
+SUMMARY: ${analysis.summary || 'No summary available'}
+
+Create a conversational, informative response that:
+1. **Explains the verdict clearly** - why is it true/false/mixed?
+2. **Mentions key sources** - what kinds of sources confirmed/denied this?
+3. **Provides context** - background info that helps understand the claim
+4. **Uses conversational tone** - like explaining to a friend, not robotic
+5. **Addresses significance** - why does this matter?
+
+TONE: Friendly, informative, conversational - NOT robotic or formal
+LENGTH: 2-3 paragraphs maximum
+AVOID: "Based on analysis", "According to data", overly technical language
+
+Generate a natural, engaging explanation:`;
+
+      const { result } = await makeGeminiAPICall(
+        MODELS.CLAIM_ANALYSIS,
+        GENERATION_CONFIGS.HIGH_ACCURACY,
+        prompt
+      );
+
+      const detailedResponse = result.response.text().trim();
+      console.log(`✅ Generated detailed explanation (${detailedResponse.length} chars)`);
+      
+      return {
+        found: true, 
+        response: detailedResponse
+      };
+      
+    } catch (error) {
+      console.error('❌ Error generating detailed explanation:', error);
+      
+      // Fallback to simpler response
+      const fallback = `Here's what I found about "${claim}": ${analysis.verdict === 'True' ? 'This appears to be accurate' : analysis.verdict === 'False' ? 'This appears to be false' : 'The evidence is mixed'}. 
+
+${analysis.summary || 'I searched through multiple sources to verify this claim.'} The confidence level is ${analysis.confidence.toLowerCase()}.
+
+${analysis.verdict === 'True' ? 'Multiple reliable sources support this information.' : analysis.verdict === 'False' ? 'Authoritative sources contradict this claim.' : 'Different sources provide conflicting information about this.'}`;
+
+      return {
+        found: true,
+        response: fallback
+      };
+    }
+  },
   generateGeneralConversation: async (userId, message) => ({ 
     found: true, 
     response: "I'm a fact-checking bot! Share an Instagram reel with claims and I'll verify them using comprehensive video/audio analysis and Google Custom Search. You can also ask me about previous fact-checks." 

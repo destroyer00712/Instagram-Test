@@ -147,7 +147,7 @@ const processAttachment = async (senderId, attachments) => {
   }
 };
 
-// Handle new conversations - CLEAN VERSION (no welcome spam)
+// Handle new conversations
 const handleNewConversation = async (senderId) => {
   console.log(`👋 New conversation started with ${senderId}`);
   
@@ -159,8 +159,6 @@ const handleNewConversation = async (senderId) => {
     : "Hi! I'm a fact-checking bot. Share an Instagram reel and I'll analyze it for you! 🔍";
     
   await instagramAPI.sendMessage(senderId, welcomeText);
-  
-  // NO MORE STATIC MENUS OR BUSINESS INFO
 };
 
 // Determine response based on message content (FACT-CHECKING FOCUSED)
