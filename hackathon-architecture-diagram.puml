@@ -1,0 +1,94 @@
+@startuml Instagram Fact-Checking Bot - System Architecture
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontSize 12
+skinparam componentFontSize 11
+
+title 🏗️ Instagram Fact-Checking Bot - System Architecture
+
+package "📱 Frontend Layer" {
+    [👤 Instagram User] as User
+    [📸 Instagram Platform] as Instagram
+}
+
+package "🌐 API Gateway" {
+    [🔗 Express.js Server\nPort 3000] as Server
+    [📡 Webhook Handler\n/webhook] as Webhook
+}
+
+package "🤖 Core Bot Logic" {
+    [💬 Message Handler\nConversation Management] as MessageHandler
+    [🧠 Fact Checker\nAI Processing Engine] as FactChecker
+    [📤 Instagram API\nMessage Delivery] as InstagramAPI
+}
+
+package "🎬 Media Processing" {
+    [📥 Video Downloader] as VideoDownloader
+    [🎵 Audio Extractor\n(FFmpeg)] as AudioExtractor
+    [🖼️ Frame Extractor\n(FFmpeg)] as FrameExtractor
+    [🗂️ File Manager\nTemp Storage] as FileManager
+}
+
+package "🧠 AI Services" {
+    [🎤 Speech-to-Text\n(Gemini AI)] as SpeechAI
+    [👁️ Visual Analysis\n(Gemini AI)] as VisualAI
+    [📝 Claim Extraction\n(Gemini AI)] as ClaimAI
+    [🔍 Fact Verification\n(Gemini AI)] as VerifyAI
+}
+
+package "🌐 External APIs" {
+    [🔍 Google Custom Search\nNews Verification] as GoogleSearch
+    [📰 News Sources\nWeb Scraping] as NewsSources
+}
+
+package "💾 Data Layer" {
+    [🧠 Conversation Memory\n(In-Memory)] as ConversationMemory
+    [📚 Fact-Check History\n(In-Memory)] as FactCheckHistory
+    [🗃️ Article Cache\n(In-Memory)] as ArticleCache
+}
+
+' User Flow
+User --> Instagram : Share reel with claims
+Instagram --> Server : Webhook notification
+Server --> Webhook : Route to webhook handler
+
+' Core Processing Flow
+Webhook --> MessageHandler : Process message/reel
+MessageHandler --> FactChecker : Analyze content
+FactChecker --> VideoDownloader : Download video
+FactChecker --> AudioExtractor : Extract audio
+FactChecker --> FrameExtractor : Extract frames
+
+' AI Processing
+AudioExtractor --> SpeechAI : Transcribe audio
+FrameExtractor --> VisualAI : Analyze frames
+FactChecker --> ClaimAI : Extract factual claims
+FactChecker --> VerifyAI : Verify claims
+
+' External Verification
+VerifyAI --> GoogleSearch : Search for verification
+GoogleSearch --> NewsSources : Scrape articles
+NewsSources --> VerifyAI : Article content
+
+' Response Generation
+VerifyAI --> FactChecker : Verification results
+FactChecker --> MessageHandler : Formatted response
+MessageHandler --> InstagramAPI : Send response
+InstagramAPI --> Instagram : Deliver to user
+Instagram --> User : Show fact-check result
+
+' Data Storage
+MessageHandler --> ConversationMemory : Store conversation state
+FactChecker --> FactCheckHistory : Store fact-check results
+NewsSources --> ArticleCache : Cache article content
+
+' Cleanup
+FileManager --> FileManager : Clean temp files
+
+note top of FactChecker : **Core Innovation**\nMulti-modal AI analysis:\n• Video frames\n• Audio transcription\n• Text captions\n• Real-time fact-checking
+
+note right of GoogleSearch : **Verification Sources**\n• News articles\n• Official sources\n• Government data\n• Fact-checking sites
+
+note bottom of ConversationMemory : **Smart Context**\n• Follow-up questions\n• Multi-reel conversations\n• History tracking\n• Context switching
+
+@enduml

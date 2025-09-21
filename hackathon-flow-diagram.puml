@@ -1,0 +1,72 @@
+@startuml Instagram Fact-Checking Bot - Hackathon Demo
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontSize 12
+skinparam sequenceArrowFontSize 11
+
+title 🔍 Instagram Fact-Checking Bot - Process Flow
+
+participant "📱 User" as User
+participant "📸 Instagram" as IG
+participant "🔗 Webhook" as Webhook
+participant "🤖 Bot Handler" as Bot
+participant "🎬 Video Processor" as VideoProcessor
+participant "🧠 AI (Gemini)" as AI
+participant "🌐 Google Search" as Search
+participant "💾 Memory" as Memory
+
+== User Shares Instagram Reel ==
+User -> IG: Shares Instagram reel with factual claims
+IG -> Webhook: Sends reel data via webhook
+Webhook -> Bot: Process new reel
+
+== Reel Analysis Pipeline ==
+Bot -> VideoProcessor: Extract video content
+activate VideoProcessor
+
+VideoProcessor -> VideoProcessor: 📥 Download video
+VideoProcessor -> VideoProcessor: 🎵 Extract audio
+VideoProcessor -> VideoProcessor: 🖼️ Extract video frames
+VideoProcessor -> AI: 🎤 Transcribe audio to text
+VideoProcessor -> AI: 👁️ Analyze video frames
+AI --> VideoProcessor: Audio transcript + Visual analysis
+deactivate VideoProcessor
+
+== Claim Extraction ==
+Bot -> AI: Extract factual claim from content
+note right: Analyzes caption + audio + video
+AI --> Bot: "H1B visa fees increased to $100k annually"
+
+== Fact-Checking Process ==
+Bot -> Search: Search for claim verification
+activate Search
+Search -> Search: Query multiple news sources
+Search --> Bot: Article results from reliable sources
+deactivate Search
+
+Bot -> AI: Analyze each article against claim
+AI --> Bot: Verdict: TRUE/FALSE/MIXED + Confidence level
+
+== Response Generation ==
+Bot -> Bot: Generate fact-check response
+note right: ✅ TRUE - Confirmed by 3 sources\n❌ FALSE - Contradicted by sources\n⚠️ MIXED - Conflicting evidence
+
+Bot -> Memory: Store fact-check history
+Bot -> IG: Send result to user
+
+== User Interaction ==
+IG -> User: Delivers fact-check result
+note over User: User can ask follow-up questions\nabout the fact-check
+
+alt Follow-up Question
+User -> IG: "Tell me more about this"
+IG -> Bot: Forward follow-up
+Bot -> Memory: Retrieve previous fact-check
+Bot -> AI: Generate detailed explanation
+AI --> Bot: Detailed explanation
+Bot -> User: Send comprehensive answer
+end
+
+note over User, Memory: 🚀 **Key Features:**\n• Multi-modal analysis (video + audio + text)\n• Real-time fact-checking with Google Search\n• AI-powered claim extraction and verification\n• Context-aware follow-up conversations\n• Automatic source verification
+
+@enduml

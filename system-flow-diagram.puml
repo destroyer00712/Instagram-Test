@@ -1,0 +1,292 @@
+@startuml Instagram Fact-Checking Bot - Complete Process Flow
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontSize 10
+skinparam classFontSize 10
+skinparam sequenceArrowFontSize 10
+
+title Instagram Fact-Checking Bot - Hyperdetailed Process Flow
+
+participant "Instagram User" as User
+participant "Instagram Platform" as IG
+participant "Express Server" as Server
+participant "Webhook Handler" as Webhook
+participant "Message Handler" as MessageHandler
+participant "Conversation State" as ConversationState
+participant "Instagram API" as InstagramAPI
+participant "Fact Checker" as FactChecker
+participant "Google Gemini AI" as GeminiAI
+participant "Google Custom Search" as GoogleSearch
+participant "File System" as FileSystem
+participant "FFmpeg Processing" as FFmpeg
+participant "Fact Check Memory" as FactCheckMemory
+
+== Initial Setup & Server Startup ==
+activate Server
+Server -> Server: Initialize Express server on PORT 3000
+Server -> Server: Load environment variables\n(API keys, tokens, secrets)
+Server -> Server: Setup middleware (bodyParser, static files)
+Server -> Server: Mount webhook routes\n(GET /webhook, POST /webhook)
+Server -> Server: Start server listening on port
+note right: Debug logs show environment variables
+
+== User Sends Message/Reel ==
+User -> IG: Send message or share Instagram reel
+activate IG
+IG -> Server: HTTP POST /webhook\n(Instagram webhook payload)
+activate Server
+Server -> Webhook: Route to webhook.receive()
+activate Webhook
+
+== Webhook Processing & Deduplication ==
+Webhook -> Webhook: Create webhook hash for deduplication
+Webhook -> Webhook: Check if webhook already processed
+alt Duplicate Webhook
+    Webhook --> IG: 200 "EVENT_RECEIVED" (skip processing)
+else New Webhook
+    Webhook -> Webhook: Add to processedWebhooks Set
+    Webhook -> Webhook: Validate body.object === 'instagram'
+    
+    == Message Event Processing ==
+    loop For each entry in body.entry
+        loop For each message in entry.messaging
+            Webhook -> Webhook: Extract senderId, messageId, timestamp
+            Webhook -> Webhook: Check if echo message (skip)
+            Webhook -> Webhook: Check if from bot account (skip)
+            Webhook -> Webhook: Check message deduplication
+            alt Duplicate Message
+                Webhook -> Webhook: Skip processing (already processed)
+            else New Message
+                Webhook -> Webhook: Add messageId to processedMessages Set
+                Webhook -> MessageHandler: handleMessage(senderId, messageData)
+                activate MessageHandler
+            end
+        end
+    end
+    Webhook --> IG: 200 "EVENT_RECEIVED"
+    deactivate Webhook
+end
+
+== Message Type Determination ==
+MessageHandler -> ConversationState: Get/update conversation state
+MessageHandler -> ConversationState: Store user activity (messageCount, lastMessage)
+
+alt Text Message
+    == Text Message Processing ==
+    MessageHandler -> InstagramAPI: sendTypingIndicator(senderId)
+    activate InstagramAPI
+    InstagramAPI -> IG: Send typing indicator via Instagram Graph API
+    deactivate InstagramAPI
+    
+    MessageHandler -> MessageHandler: determineResponse(messageText, senderId)
+    
+    alt Basic Commands (hi, hello, history)
+        alt History Request
+            MessageHandler -> FactCheckMemory: getUserFactCheckHistory(senderId)
+            activate FactCheckMemory
+            FactCheckMemory --> MessageHandler: Return user's fact-check history
+            deactivate FactCheckMemory
+            MessageHandler -> MessageHandler: Format history response
+        else Greeting
+            MessageHandler -> MessageHandler: Generate welcome message
+        end
+    
+    else "Tell me more" / Details Request
+        MessageHandler -> FactCheckMemory: Get latest fact-check
+        MessageHandler -> FactChecker: generateDetailedExplanation(claim, analysis)
+        activate FactChecker
+        FactChecker -> GeminiAI: Generate detailed explanation
+        activate GeminiAI
+        GeminiAI --> FactChecker: Detailed explanation text
+        deactivate GeminiAI
+        FactChecker --> MessageHandler: Formatted detailed response
+        deactivate FactChecker
+    
+    else Follow-up Questions
+        MessageHandler -> FactCheckMemory: Get recent fact-checks (10 min window)
+        MessageHandler -> MessageHandler: findMostRelevantFactCheck()\n(keyword matching + recency + active reel)
+        
+        alt Ambiguous Question (multiple reels)
+            MessageHandler -> MessageHandler: createClarificationResponse()
+            MessageHandler -> MessageHandler: List recent fact-checks for disambiguation
+        else Clear Follow-up
+            MessageHandler -> MessageHandler: generateFollowUpResponse()\n(context-aware response based on claim type)
+            MessageHandler -> ConversationState: Update context switch flags
+        end
+    
+    else General Conversation
+        MessageHandler -> FactChecker: generateGeneralConversation(senderId, messageText)
+        FactChecker --> MessageHandler: AI-generated conversational response
+    end
+    
+    MessageHandler -> InstagramAPI: sendMessage(senderId, responseText)
+    activate InstagramAPI
+    InstagramAPI -> InstagramAPI: Check message length vs Instagram limit (1000 chars)
+    alt Message too long
+        InstagramAPI -> InstagramAPI: splitMessage() - Split by sentences, then words
+        loop For each chunk
+            InstagramAPI -> InstagramAPI: Add "Part X/Y" prefix
+            InstagramAPI -> IG: Send message chunk via Graph API
+            InstagramAPI -> InstagramAPI: 1 second delay between chunks
+        end
+    else Normal length
+        InstagramAPI -> IG: Send single message via Graph API
+    end
+    deactivate InstagramAPI
+
+else Attachment (Instagram Reel)
+    == Instagram Reel Processing ==
+    MessageHandler -> InstagramAPI: sendTypingIndicator(senderId)
+    MessageHandler -> MessageHandler: Check attachment type
+    
+    alt Not Instagram Reel
+        MessageHandler -> InstagramAPI: sendMessage("I can only fact-check Instagram reels")
+    else Instagram Reel Detected
+        MessageHandler -> InstagramAPI: sendMessage(botResponses.factCheckProcessing)
+        MessageHandler -> FactChecker: processInstagramReel(senderId, igReel)
+        activate FactChecker
+        
+        == Reel Analysis Pipeline ==
+        FactChecker -> FactChecker: Generate unique reelId (UUID)
+        FactChecker -> FactChecker: Extract videoUrl and rawCaption
+        FactChecker -> FactChecker: cleanCaption(rawCaption)
+        note right: Remove hashtags, mentions, emojis. Determine if caption is significant for fact-checking
+        
+        == Video Download & Processing ==
+        FactChecker -> FileSystem: Ensure temp directories exist
+        FactChecker -> FactChecker: downloadVideo(videoUrl, fileName)
+        FactChecker -> FileSystem: Download video file to temp directory
+        
+        note over FactChecker: **Parallel Audio & Frame Extraction**
+        FactChecker -> FFmpeg: extractAudio(videoPath)
+        activate FFmpeg
+        FFmpeg -> FileSystem: Convert video to MP3 audio file
+        FFmpeg --> FactChecker: audioPath
+        deactivate FFmpeg
+        
+        FactChecker -> FFmpeg: extractVideoFrames(videoPath, 5)
+        activate FFmpeg
+        FFmpeg -> FileSystem: Extract 5 HD frames as JPEG
+        FFmpeg --> FactChecker: Array of frame file paths
+        deactivate FFmpeg
+        
+        == Content Analysis Pipeline ==
+        note over FactChecker: **Parallel Transcription & Visual Analysis**
+        FactChecker -> FactChecker: transcribeAudio(audioPath)
+        FactChecker -> GeminiAI: Transcribe audio with speech-to-text
+        activate GeminiAI
+        GeminiAI --> FactChecker: Audio transcription text
+        deactivate GeminiAI
+        
+        FactChecker -> FactChecker: analyzeVideoFrames(framePaths, transcription)
+        FactChecker -> GeminiAI: Analyze video frames for visual context
+        activate GeminiAI
+        GeminiAI --> FactChecker: Comprehensive visual analysis
+        deactivate GeminiAI
+        
+        == Claim Extraction ==
+        FactChecker -> FactChecker: extractClaim(transcription, rawCaption, videoAnalysis)
+        note right: Prioritizes caption if significant, otherwise focuses on audio/video content
+        FactChecker -> GeminiAI: Extract most important verifiable factual claim
+        activate GeminiAI
+        GeminiAI --> FactChecker: Extracted claim or "No verifiable claim found"
+        deactivate GeminiAI
+        
+        alt No Verifiable Claim Found
+            FactChecker --> MessageHandler: Return failure result with content summary
+            MessageHandler -> InstagramAPI: sendMessage(botResponses.noClaimFound)
+        else Claim Found
+            == Fact-Checking Pipeline ==
+            FactChecker -> FactChecker: createSearchQueries(claim)\n- Generate multiple search variations\n- Include "news", "latest", "breaking" modifiers
+            
+            loop For each search query (max 3)
+                FactChecker -> GoogleSearch: Search via Custom Search API\n(News search mode, 5 results per query)
+                activate GoogleSearch
+                GoogleSearch --> FactChecker: Search results with titles, URLs, snippets
+                deactivate GoogleSearch
+                
+                loop For each article (top 3 per query)
+                    FactChecker -> FactChecker: scrapeArticleContent(articleUrl)
+                    FactChecker -> FactChecker: Extract main content using Cheerio\n(Remove ads, scripts, navigation)
+                    FactChecker -> FactChecker: Clean and validate article content
+                    
+                    FactChecker -> FactChecker: analyzeArticleForClaim(claim, articleContent)
+                    FactChecker -> GeminiAI: AI analysis to verify claim against article\n(Focus on core truth, ignore minor details)
+                    activate GeminiAI
+                    GeminiAI --> FactChecker: Verdict (TRUE/FALSE/UNCLEAR) + Confidence + Reasoning
+                    deactivate GeminiAI
+                    
+                    FactChecker -> FactChecker: Store analysis result with source info
+                    FactChecker -> FactChecker: 500ms delay between articles
+                end
+                FactChecker -> FactChecker: 1s delay between search queries
+            end
+            
+            == Result Analysis & Verdict ==
+            FactChecker -> FactChecker: analyzeFactChecks(allResults, originalClaim)
+            FactChecker -> FactChecker: Count verdicts (trueCount, falseCount, mixedCount, unclearCount)
+            FactChecker -> FactChecker: Calculate average confidence from all sources
+            FactChecker -> FactChecker: Apply enhanced decision logic:\n- High-confidence FALSE sources (conspiracy detection)\n- High-confidence TRUE sources (news confirmation)\n- Majority rule fallback\n- Recency and authority weighting
+            
+            FactChecker -> FactChecker: Generate summary based on final verdict\n("Based on X sources, this claim is TRUE/FALSE/MIXED")
+            
+            == Memory Storage ==
+            FactChecker -> FactCheckMemory: Store comprehensive fact-check record
+            activate FactCheckMemory
+            FactCheckMemory -> FactCheckMemory: Create factCheckRecord with:\n- claim, analysis, transcription\n- videoAnalysis, captionInfo, timestamp, reelId
+            FactCheckMemory -> FactCheckMemory: Add to user's history (max 50 records)
+            deactivate FactCheckMemory
+            
+            FactChecker --> MessageHandler: Return success with analysis results
+        end
+        
+        == Cleanup ==
+        FactChecker -> FileSystem: cleanupFiles(videoPath, audioPath, framePaths)
+        FactChecker -> FileSystem: Delete all temporary files
+        deactivate FactChecker
+        
+        == Response Generation ==
+        alt Success with Claim
+            MessageHandler -> ConversationState: updateContextForNewReel(senderId, reelId, claim)
+            MessageHandler -> MessageHandler: Format fact-check response:\n- Verdict with emoji (✅/❌/⚠️)\n- Confidence level\n- Source count\n- Caption analysis note
+            MessageHandler -> InstagramAPI: sendMessage(responseMessage)
+        else No Claim Found
+            MessageHandler -> InstagramAPI: sendMessage(noClaimFound with analysis details)
+        else Error
+            MessageHandler -> InstagramAPI: sendMessage(factCheckError)
+        end
+    end
+end
+
+deactivate MessageHandler
+
+== Rate Limiting & Message Delivery ==
+activate InstagramAPI
+InstagramAPI -> InstagramAPI: Check rate limiter (60 requests/minute)
+alt Rate Limit Exceeded
+    InstagramAPI -> InstagramAPI: Throw rate limit error
+else Within Limits
+    InstagramAPI -> InstagramAPI: Add request timestamp to rate limiter
+    InstagramAPI -> IG: HTTP POST to Graph API\n(/v23.0/{account-id}/messages)
+    activate IG
+    IG -> User: Deliver message to Instagram user
+    activate User
+    IG --> InstagramAPI: API response with message delivery confirmation
+    deactivate IG
+    InstagramAPI -> InstagramAPI: Log successful delivery
+end
+deactivate InstagramAPI
+
+== Periodic Cleanup ==
+note over Webhook: Every 60 seconds: Clean message/webhook caches\nif size > limits (1000 messages, 500 webhooks)
+
+== Memory Management ==
+note over FactCheckMemory: In-memory storage with:\n- User conversation states\n- Fact-check history (50 per user)\n- Article content cache\n- Processed message deduplication
+
+== Error Handling ==
+note over Server: Global error middleware catches all errors\nSends generic "Internal server error" response\nLogs detailed error information
+
+User --> User: Receives fact-check result or response
+deactivate User
+
+@enduml
