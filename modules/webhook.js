@@ -1,6 +1,19 @@
 const crypto = require('crypto');
 const messageHandler = require('./messageHandler');
 
+// DEDUPLICATION: Track processed messages to avoid duplicates/echoes
+const processedMessages = new Set();
+const MESSAGE_CACHE_SIZE = 1000; // Keep last 1000 message IDs
+const MESSAGE_EXPIRY_TIME = 5 * 60 * 1000; // 5 minutes
+
+// Clean up old message IDs periodically to prevent memory leaks
+setInterval(() => {
+  if (processedMessages.size > MESSAGE_CACHE_SIZE) {
+    console.log(`🧹 Cleaning message cache (size: ${processedMessages.size})`);
+    processedMessages.clear();
+  }
+}, 60000); // Clean every minute
+
 /**
  * Webhook verification for Instagram
  * This is called when Facebook/Instagram verifies your webhook endpoint
@@ -129,6 +142,25 @@ const handleMessage = async (messageEvent) => {
   const senderId = messageEvent.sender ? messageEvent.sender.id : 'unknown';
   const recipientId = messageEvent.recipient ? messageEvent.recipient.id : 'unknown';
   const timestamp = messageEvent.timestamp || Date.now();
+  const messageId = messageEvent.message?.mid || `${senderId}_${timestamp}`;
+  
+  // 🚫 DEDUPLICATION: Check if we've already processed this message
+  if (processedMessages.has(messageId)) {
+    console.log(`🔄 DUPLICATE MESSAGE IGNORED: ${messageId} (already processed)`);
+    console.log(`📊 Cache size: ${processedMessages.size} messages`);
+    return; // Skip processing
+  }
+  
+  // Add message ID to processed set
+  processedMessages.add(messageId);
+  console.log(`✅ NEW MESSAGE ACCEPTED: ${messageId} (cache size: ${processedMessages.size})`);
+  
+  // Clean up old entries if cache is getting too large
+  if (processedMessages.size > MESSAGE_CACHE_SIZE) {
+    console.log(`🧹 Message cache full, clearing oldest entries`);
+    processedMessages.clear();
+    processedMessages.add(messageId); // Re-add current message
+  }
   
   console.log(`👤 Message Processing:`);
   console.log(`  - From: ${senderId}`);

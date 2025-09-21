@@ -220,7 +220,7 @@ const validateWebhookSignature = (payload, signature) => {
  * Get conversation history (if available)
  */
 const getConversationHistory = async (userId) => {
-  console.log(`📜 Getting conversation history for user ${userId}`);
+  image.pngconsole.log(`📜 Getting conversation history for user ${userId}`);
   
   if (!rateLimiter.canMakeRequest()) {
     console.log('⚠️ Rate limit exceeded, cannot get conversation history');
