@@ -82,38 +82,62 @@ Want to learn more about any specific service? Just ask! 😊`,
   factCheckProcessing: "🔍 I'm analyzing this video for fact-checking. This may take a moment...",
   
   factCheckComplete: (claim, analysis) => {
-    // Start with a human-like opener based on verdict
+    // INSTAGRAM CHARACTER LIMIT: 1,000 characters max - keep it concise!
+    
+    // Start with verdict emoji and short intro
     let message = '';
     switch (analysis.verdict) {
       case 'True':
-        message = `✅ **Good news!** I checked that claim and it looks legit.\n\n`;
+        message = `✅ **VERIFIED** `;
         break;
       case 'False':
-        message = `❌ **Heads up** - I found some issues with that claim.\n\n`;
+        message = `❌ **FALSE** `;
         break;
       case 'Mixed':
-        message = `⚖️ **It's complicated** - there's some truth here but with important caveats.\n\n`;
+        message = `⚖️ **MIXED** `;
         break;
       default:
-        message = `🤔 **Here's what I found** about that claim:\n\n`;
+        message = `🤔 **UNCLEAR** `;
     }
     
-    message += `🎯 **The Claim**: "${claim}"\n\n`;
+    // Add claim (truncated if too long)
+    const shortClaim = claim.length > 100 ? claim.substring(0, 97) + '...' : claim;
+    message += `"${shortClaim}"\n\n`;
     
-    // Use the enhanced summary (content-prioritized or latest-focused)
-    message += analysis.summary;
-    
-    // Add conversational closing based on confidence
-    message += `\n\n`;
-    if (analysis.confidence === 'High') {
-      message += `💪 I'm pretty confident about this one - multiple reliable sources lined up.`;
-    } else if (analysis.confidence === 'Medium') {
-      message += `🤷‍♂️ I'm moderately confident, but feel free to ask if you want me to dig deeper.`;
+    // Add concise summary based on analysis type
+    if (analysis.latestArticleAnalysis && analysis.latestArticleAnalysis.aiAnalysis) {
+      const aiAnalysis = analysis.latestArticleAnalysis.aiAnalysis;
+      message += `📰 Latest source: ${analysis.latestArticleAnalysis.source.publisher}\n`;
+      message += `🎯 AI Analysis: ${aiAnalysis.verdict}\n`;
+      if (aiAnalysis.evidence_summary && aiAnalysis.evidence_summary.length > 0) {
+        const shortEvidence = aiAnalysis.evidence_summary.substring(0, 150) + (aiAnalysis.evidence_summary.length > 150 ? '...' : '');
+        message += `📋 Evidence: ${shortEvidence}\n`;
+      }
     } else {
-      message += `🔍 The evidence is limited, so take this with a grain of salt.`;
+      // Fallback to basic summary
+      const sourcesCount = analysis.sources ? analysis.sources.length : 0;
+      message += `📊 Checked ${sourcesCount} sources\n`;
     }
     
-    message += `\n\n💬 **Questions?** Just ask me about this claim, or send another video to fact-check! You can even say things like "tell me more about that story" or "what about that election claim?"`;
+    message += `\n🎯 Confidence: ${analysis.confidence}`;
+    
+    // Add closing based on available characters
+    const currentLength = message.length;
+    const remainingChars = 950 - currentLength; // Leave buffer for closing
+    
+    if (remainingChars > 100) {
+      message += `\n\n💬 Questions? Send another reel or ask "tell me more"!`;
+    } else if (remainingChars > 50) {
+      message += `\n\n💬 Questions? Ask me more!`;
+    } else {
+      // Very tight on space, minimal closing
+      message += `\n\n💬 Questions?`;
+    }
+    
+    // Final safety check - truncate if still too long
+    if (message.length > 990) {
+      message = message.substring(0, 987) + '...';
+    }
     
     return message;
   },
@@ -510,5 +534,6 @@ module.exports = {
   processMessage,
   processAttachment,
   getConversationState,
-  clearConversationState
+  clearConversationState,
+  botResponses // Export for testing
 }; 
