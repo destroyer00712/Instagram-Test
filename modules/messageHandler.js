@@ -9,7 +9,7 @@ const conversationState = new Map();
 const botResponses = {
   factCheckProcessing: "🔍 Processing your reel for fact-checking... Please wait while I analyze the caption, video and audio content.",
   
-  factCheckComplete: (claim, analysis, captionInfo = null) => {
+  factCheckComplete: (claim, analysis, captionInfo = null, cacheInfo = null) => {
     const verdictIcon = analysis.verdict === 'True' ? '✅' : analysis.verdict === 'False' ? '❌' : '⚠️';
     const confidenceIcon = analysis.confidence === 'High' ? '🎯' : analysis.confidence === 'Medium' ? '📊' : '🤔';
     
@@ -30,6 +30,14 @@ const botResponses = {
     const sourceCount = analysis.sources || 0;
     const sourceText = sourceCount > 1 ? `${sourceCount} sources checked` : 'Multiple sources checked';
     
+    // Cache status indicator
+    let cacheNote = '';
+    if (cacheInfo && cacheInfo.cached) {
+      const ageMinutes = Math.floor(cacheInfo.cacheAge / 60);
+      const similarityPercent = Math.round(cacheInfo.similarity * 100);
+      cacheNote = `\n⚡ Verified ${ageMinutes}min ago (${similarityPercent}% similar)`;
+    }
+    
     // Caption processing note (if significant)
     let captionNote = '';
     if (captionInfo && captionInfo.isSignificant) {
@@ -40,7 +48,7 @@ const botResponses = {
     
     // Keep it under 300 characters for the main response
     return `${verdict}
-${confidence} • ${sourceText}${captionNote}
+${confidence} • ${sourceText}${cacheNote}${captionNote}
 
 💬 Ask "tell me more" for details!`;
   },
@@ -400,8 +408,13 @@ const processAttachment = async (senderId, attachments) => {
           // Update conversation context for the new reel
           updateContextForNewReel(senderId, result.reelId, result.claim);
           
-          // Send fact-check results with caption information
-          const responseMessage = botResponses.factCheckComplete(result.claim, result.analysis, result.captionInfo);
+          // Send fact-check results with caption and cache information
+          const cacheInfo = {
+            cached: result.cached || false,
+            cacheAge: result.cacheAge || null,
+            similarity: result.similarity || null
+          };
+          const responseMessage = botResponses.factCheckComplete(result.claim, result.analysis, result.captionInfo, cacheInfo);
           await instagramAPI.sendMessage(senderId, responseMessage);
         } else {
           // No claims found - provide detailed feedback about what was analyzed

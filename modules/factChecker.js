@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const ffmpeg = require('fluent-ffmpeg');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const cheerio = require('cheerio');
+const vectorCache = require('./vectorCache');
 
 // Initialize Gemini AI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -1014,31 +1015,77 @@ const processInstagramReel = async (senderId, attachment) => {
     
     console.log(`✅ [${reelId}] Extracted claim: "${claim}"`);
     
-    // STEP 5: Fact-check using ONLY Google Custom Search + AI  
-    console.log(`🔍 [${reelId}] Fact-checking with Google Custom Search...`);
-    const factCheckResults = await searchFactChecks(claim);
+    // STEP 5: Check vector cache for similar claims first
+    console.log(`🔍 [${reelId}] Checking vector cache for similar claims...`);
+    let cachedResult = null;
+    let cacheHit = false;
+    let similarClaim = null;
     
-    if (factCheckResults.length === 0) {
-      console.log(`⚠️ [${reelId}] No sources found for fact-checking`);
-      return {
-        success: false,
-        message: 'No reliable sources found to verify this claim.',
-        claim: claim,
-        transcription: transcription,
-        videoAnalysis: videoAnalysis,
-        captionInfo: captionInfo,
-        reelId: reelId
-      };
+    if (vectorCache.isReady()) {
+      try {
+        similarClaim = await vectorCache.searchSimilarClaims(claim, transcription, rawCaption);
+        
+        if (similarClaim && !similarClaim.stale) {
+          // Fresh cached result found
+          console.log(`[VECTOR_CACHE] Returning cached result (fresh, similarity: ${similarClaim.similarity.toFixed(3)})`);
+          cachedResult = similarClaim.payload.fact_check_result;
+          cacheHit = true;
+        } else if (similarClaim && similarClaim.stale) {
+          console.log(`[VECTOR_CACHE] Similar claim found but stale (${similarClaim.ageMinutes}min old), running fresh fact-check`);
+        } else {
+          console.log(`[VECTOR_CACHE] No similar claims found, running fresh fact-check`);
+        }
+      } catch (error) {
+        console.log(`[VECTOR_CACHE] Error checking cache: ${error.message}, running fresh fact-check`);
+      }
+    } else {
+      console.log(`[VECTOR_CACHE] Vector cache not ready, running fresh fact-check`);
     }
     
-    console.log(`📊 [${reelId}] Found ${factCheckResults.length} sources, analyzing...`);
+    let factCheckResults = [];
+    let analysis = null;
     
-    // STEP 6: Enhanced analysis with video context
-    const analysis = await analyzeFactChecks(factCheckResults, claim, videoAnalysis);
+    if (cacheHit && cachedResult) {
+      // Use cached result
+      analysis = cachedResult;
+      console.log(`✅ [${reelId}] Using cached fact-check result: ${analysis.verdict} (${analysis.confidence})`);
+    } else {
+      // STEP 6: Fact-check using ONLY Google Custom Search + AI  
+      console.log(`🔍 [${reelId}] Fact-checking with Google Custom Search...`);
+      factCheckResults = await searchFactChecks(claim);
+      
+      if (factCheckResults.length === 0) {
+        console.log(`⚠️ [${reelId}] No sources found for fact-checking`);
+        return {
+          success: false,
+          message: 'No reliable sources found to verify this claim.',
+          claim: claim,
+          transcription: transcription,
+          videoAnalysis: videoAnalysis,
+          captionInfo: captionInfo,
+          reelId: reelId
+        };
+      }
+      
+      console.log(`📊 [${reelId}] Found ${factCheckResults.length} sources, analyzing...`);
+      
+      // STEP 7: Enhanced analysis with video context
+      analysis = await analyzeFactChecks(factCheckResults, claim, videoAnalysis);
+    }
     
     console.log(`✅ [${reelId}] COMPLETE: ${analysis.verdict} (${analysis.confidence})`);
     
-    // STEP 7: Store comprehensive result in user history
+    // STEP 8: Store in vector cache if not from cache
+    if (!cacheHit && vectorCache.isReady()) {
+      try {
+        await vectorCache.storeFactCheck(claim, transcription, rawCaption, analysis, senderId, reelId);
+        console.log(`[VECTOR_CACHE] ✅ Stored new fact-check in vector database`);
+      } catch (error) {
+        console.log(`[VECTOR_CACHE] ❌ Error storing in vector cache: ${error.message}`);
+      }
+    }
+    
+    // STEP 9: Store comprehensive result in user history
     const factCheckRecord = {
       userId: senderId,
       result: {
@@ -1074,7 +1121,10 @@ const processInstagramReel = async (senderId, attachment) => {
       captionInfo: captionInfo,
       analysis: analysis,
       sources: factCheckResults.length,
-      reelId: reelId
+      reelId: reelId,
+      cached: cacheHit,
+      cacheAge: cacheHit ? Math.floor((Date.now() - (similarClaim?.payload?.metadata?.created_at || Date.now())) / 1000) : null,
+      similarity: cacheHit ? similarClaim?.similarity : null
     };
     
   } catch (error) {
@@ -1094,7 +1144,7 @@ const processInstagramReel = async (senderId, attachment) => {
 module.exports = {
   searchFactChecks,
   analyzeFactChecks,
-  processInstagramReel,  // NEW: Comprehensive version with video/audio analysis + Google Custom Search
+  processInstagramReel,  // NEW: Comprehensive version with video/audio analysis + Google Custom Search + Vector Cache
   makeGeminiAPICall,
   // Video/Audio processing functions
   downloadVideo,

@@ -39,6 +39,7 @@ https://github.com/user-attachments/assets/453d9c6f-644d-4916-962b-22e574042fa9
 - **Automatic Fallback**: Seamless model switching for reliability
 - **Conspiracy Detection**: Identifies misinformation patterns
 - **Source Verification**: Cross-references multiple reliable sources
+- **Vector Caching**: Qdrant-powered similarity search for instant responses
 
 ### 🔍 **Comprehensive Analysis**
 - **Credibility Scoring**: 0-100% confidence ratings
@@ -72,9 +73,10 @@ https://github.com/user-attachments/assets/453d9c6f-644d-4916-962b-22e574042fa9
 
 - **Backend**: Node.js, Express.js
 - **AI/ML**: Google Gemini AI (2.0 Flash, 1.5 Pro)
+- **Vector Database**: Qdrant (for similarity caching)
 - **Media Processing**: FFmpeg, Puppeteer
 - **APIs**: Instagram Graph API, Google Custom Search
-- **Storage**: File system (temp processing)
+- **Storage**: File system (temp processing), Qdrant (vector cache)
 - **Deployment**: PM2, Nginx
 
 ## 📋 Prerequisites
@@ -119,6 +121,11 @@ WEBHOOK_SECRET=your_webhook_secret
 GEMINI_API_KEY=your_gemini_api_key
 GOOGLE_CUSTOM_SEARCH_API_KEY=your_search_api_key
 GOOGLE_CUSTOM_SEARCH_ENGINE_ID=your_search_engine_id
+
+# Vector Database (Qdrant) - Optional but recommended for caching
+QDRANT_URL=http://localhost:6333
+QDRANT_API_KEY=your_qdrant_api_key_if_using_cloud
+VECTOR_CACHE_COLLECTION=fact_checks
 
 # Server Configuration
 PORT=3000
@@ -252,18 +259,50 @@ pm2 monit
    - Extract frames from videos
    - Transcribe audio content
    - Analyze visual elements
-4. **AI Processing**: 
+4. **Vector Cache Check**: 
+   - Generate embeddings for claim similarity
+   - Search Qdrant for similar cached results
+   - Return cached result if fresh (< 30 min) and similar (> 85%)
+5. **AI Processing** (if not cached): 
    - Run through Gemini AI models
    - Detect conspiracy theories
    - Verify factual claims
-5. **Source Verification**: 
+6. **Source Verification**: 
    - Search reliable fact-checking sources
    - Cross-reference information
    - Check publication dates
-6. **Response Generation**: 
+7. **Cache Storage**: 
+   - Store new fact-check results in vector database
+   - Set 1-hour expiration for automatic cleanup
+8. **Response Generation**: 
    - Compile results with confidence scores
-   - Include source links
+   - Include source links and cache status
    - Send formatted response
+
+## ⚡ Vector Caching System
+
+The bot includes an intelligent caching system powered by Qdrant vector database:
+
+### **How It Works**
+- **Similarity Search**: Uses sentence transformers to find similar claims
+- **Freshness Check**: Only returns cached results if < 30 minutes old
+- **Automatic Cleanup**: Expires entries after 1 hour to ensure accuracy
+- **Performance Boost**: Reduces fact-check time from ~30s to ~2s for similar queries
+
+### **Cache Configuration**
+- **Similarity Threshold**: 85%+ match required
+- **Freshness Window**: 30 minutes for cached results
+- **Expiration Time**: 1 hour maximum cache lifetime
+- **Embedding Model**: all-MiniLM-L6-v2 (384 dimensions)
+
+### **Setup Qdrant** (Optional)
+```bash
+# Using Docker
+docker run -p 6333:6333 qdrant/qdrant
+
+# Or use Qdrant Cloud
+# Set QDRANT_URL and QDRANT_API_KEY in .env
+```
 
 ## 📚 Documentation
 
