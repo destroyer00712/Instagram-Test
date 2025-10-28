@@ -125,7 +125,8 @@ const isFresh = (timestamp) => {
 const searchSimilarClaims = async (claim, transcription = '', caption = '') => {
   try {
     if (!qdrantClient) {
-      throw new Error('Qdrant client not initialized');
+      console.log('[VECTOR_CACHE] Qdrant client not initialized, returning null');
+      return null;
     }
     
     console.log('[VECTOR_CACHE] Searching for similar claims...');
@@ -192,7 +193,8 @@ const searchSimilarClaims = async (claim, transcription = '', caption = '') => {
 const storeFactCheck = async (claim, transcription, caption, factCheckResult, userId, reelId) => {
   try {
     if (!qdrantClient) {
-      throw new Error('Qdrant client not initialized');
+      console.log('[VECTOR_CACHE] Qdrant client not initialized, skipping storage');
+      return null;
     }
     
     console.log('[VECTOR_CACHE] Storing fact-check in vector database...');
@@ -250,7 +252,8 @@ const storeFactCheck = async (claim, transcription, caption, factCheckResult, us
 const cleanupExpiredEntries = async () => {
   try {
     if (!qdrantClient) {
-      throw new Error('Qdrant client not initialized');
+      console.log('[VECTOR_CACHE] Qdrant client not initialized, skipping cleanup');
+      return { deleted: 0, total: 0 };
     }
     
     console.log('[VECTOR_CACHE] Starting cleanup of expired entries...');
@@ -316,7 +319,16 @@ const cleanupExpiredEntries = async () => {
 const getCacheStats = async () => {
   try {
     if (!qdrantClient) {
-      return { error: 'Qdrant client not initialized' };
+      console.log('[VECTOR_CACHE] Qdrant client not initialized, returning empty stats');
+      return { 
+        totalPoints: 0, 
+        collectionName: COLLECTION_NAME,
+        vectorSize: VECTOR_SIZE,
+        similarityThreshold: SIMILARITY_THRESHOLD,
+        freshnessThresholdMinutes: FRESHNESS_THRESHOLD / (60 * 1000),
+        expirationHours: EXPIRATION_TIME / (60 * 60 * 1000),
+        status: 'not_initialized'
+      };
     }
     
     const collectionInfo = await qdrantClient.getCollection(COLLECTION_NAME);
