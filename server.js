@@ -23,19 +23,26 @@ app.use(express.static('public'));
 
 // Import modules
 const webhookHandler = require('./modules/webhook');
+const whatsappWebhookHandler = require('./modules/whatsappWebhook');
 const messageHandler = require('./modules/messageHandler');
 const instagramAPI = require('./modules/instagramAPI');
 
 // Routes
 app.get('/', (req, res) => {
-  res.send('Instagram Chatbot is running!');
+  res.send('Instagram & WhatsApp Chatbot is running!');
 });
 
-// Webhook verification endpoint
+// Instagram Webhook verification endpoint
 app.get('/webhook', webhookHandler.verify);
 
-// Webhook message receiving endpoint
+// Instagram Webhook message receiving endpoint
 app.post('/webhook', webhookHandler.receive);
+
+// WhatsApp Webhook verification endpoint
+app.get('/whatsapp-webhook', whatsappWebhookHandler.verify);
+
+// WhatsApp Webhook message receiving endpoint
+app.post('/whatsapp-webhook', whatsappWebhookHandler.receive);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -50,8 +57,9 @@ app.use((err, req, res, next) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Instagram Chatbot server running on port ${PORT}`);
-  console.log(`📡 Webhook URL: http://localhost:${PORT}/webhook`);
+  console.log(`🚀 Instagram & WhatsApp Chatbot server running on port ${PORT}`);
+  console.log(`📡 Instagram Webhook URL: http://localhost:${PORT}/webhook`);
+  console.log(`📱 WhatsApp Webhook URL: http://localhost:${PORT}/whatsapp-webhook`);
 });
 
 module.exports = app; 
