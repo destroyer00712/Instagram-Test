@@ -1,0 +1,74 @@
+# Dependencies
+node_modules
+npm-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test files
+test
+tests
+*.test.js
+*.spec.js
+coverage
+
+# Documentation
+*.md
+!README.md
+docs
+
+# Build artifacts
+dist
+build
+*.log
+
+# Temporary files
+temp
+tmp
+*.tmp
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.travis.yml
+
+# Other
+*.pem
+*.key
+*.crt
+ecosystem.config.js
+deploy.sh
+*.puml
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.mov
+assets

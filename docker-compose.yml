@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  # Instagram Fact-Checking Bot Application
+  instagram-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: instagram-fact-check-bot
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Server Configuration
+      - NODE_ENV=production
+      - PORT=3000
+      
+      # Instagram API (required)
+      - INSTAGRAM_ACCESS_TOKEN=${INSTAGRAM_ACCESS_TOKEN}
+      - INSTAGRAM_APP_SECRET=${INSTAGRAM_APP_SECRET}
+      - INSTAGRAM_VERIFY_TOKEN=${INSTAGRAM_VERIFY_TOKEN}
+      
+      # Google APIs (required)
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GOOGLE_CUSTOM_SEARCH_API_KEY=${GOOGLE_CUSTOM_SEARCH_API_KEY}
+      - GOOGLE_CUSTOM_SEARCH_ENGINE_ID=${GOOGLE_CUSTOM_SEARCH_ENGINE_ID}
+      
+      # WhatsApp API (optional)
+      - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN:-}
+      - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN:-}
+      - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID:-}
+      
+      # Qdrant Vector Database Configuration
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - VECTOR_CACHE_COLLECTION=${VECTOR_CACHE_COLLECTION:-fact_checks}
+      
+      # Temporary File Directories
+      - TEMP_VIDEO_DIR=./temp/videos/
+      - TEMP_FRAMES_DIR=./temp/frames/
+      - TEMP_AUDIO_DIR=./temp/audio/
+    volumes:
+      # Persist temp files (optional, can be removed for stateless)
+      - ./temp:/app/temp
+      # Persist node_modules cache (optional, for faster rebuilds)
+      - node_modules:/app/node_modules
+    depends_on:
+      - qdrant
+    networks:
+      - fact-check-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Qdrant Vector Database
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant-vector-db
+    restart: unless-stopped
+    ports:
+      - "6333:6333"  # REST API
+      - "6334:6334"  # gRPC API (optional)
+    volumes:
+      # Persist Qdrant data
+      - qdrant_storage:/qdrant/storage
+      - qdrant_config:/qdrant/config
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    networks:
+      - fact-check-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  # Qdrant persistent storage
+  qdrant_storage:
+    driver: local
+  qdrant_config:
+    driver: local
+  # Node modules cache (optional)
+  node_modules:
+    driver: local
+
+networks:
+  fact-check-network:
+    driver: bridge
