@@ -51,13 +51,24 @@ WORKDIR /app
 # Copy package files
 COPY package.json package-lock.json* ./
 
+# Configure npm for better reliability with longer timeouts for large packages
+RUN npm config set fetch-retries 5 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm config set fetch-timeout 600000
+
 # Install dependencies
 # Use npm ci if package-lock.json exists, otherwise fallback to npm install
-RUN if [ -f package-lock.json ]; then \
-      npm ci --omit=dev && npm cache clean --force; \
+# This step can take 10-15 minutes due to puppeteer (Chromium) and transformers downloads
+RUN echo "Starting npm install..." && \
+    if [ -f package-lock.json ]; then \
+      npm ci --omit=dev --prefer-offline --no-audit || \
+      (echo "npm ci failed, trying npm install..." && npm install --production --prefer-offline --no-audit); \
     else \
-      npm install --production && npm cache clean --force; \
-    fi
+      npm install --production --prefer-offline --no-audit; \
+    fi && \
+    echo "npm install completed" && \
+    npm cache clean --force
 
 # Copy application code
 COPY . .
