@@ -1,7 +1,7 @@
 # Dockerfile for Instagram Fact-Checking Bot
 # Multi-stage build for optimization
 
-FROM node:18-slim AS base
+FROM node:20-slim AS base
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
