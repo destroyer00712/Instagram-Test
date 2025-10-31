@@ -320,9 +320,28 @@ docker push gcr.io/$PROJECT_ID/instagram-bot:latest
 
 **Note**: The `docker build` command needs to be run from the directory containing your `Dockerfile` (which should be the root of your project).
 
+### 4.3 Alternative: Use Cloud Build (If Docker Build Fails)
+
+If Docker build fails or takes too long, you can use Cloud Build instead:
+
+```bash
+# Set project ID
+export PROJECT_ID=$(gcloud config get-value project)
+
+# Submit build to Cloud Build (builds in the cloud, no local Docker needed)
+gcloud builds submit --tag gcr.io/$PROJECT_ID/instagram-bot:latest
+
+# Or if you're already in the project directory with a cloudbuild.yaml
+gcloud builds submit --config cloudbuild.yaml
+```
+
+This method builds in Google Cloud's infrastructure, which is often faster and doesn't require Docker to be installed locally.
+
 ---
 
 ## Step 5: Deploy Application to Cloud Run
+
+**⚠️ Important**: Make sure you have completed Step 4 (Build and Push Docker Image) before proceeding. The Docker image must exist in Google Container Registry before you can deploy to Cloud Run.
 
 ### 5.1 Get Qdrant URL
 
@@ -343,15 +362,32 @@ gcloud run deploy instagram-bot \
   --platform managed \
   --region us-central1 \
   --allow-unauthenticated \
-  --memory 4Gi \
-  --cpu 2 \
-  --timeout 300 \
-  --max-instances 10 \
-  --min-instances 1 \
-  --concurrency 80 \
-  --set-env-vars="NODE_ENV=production,PORT=8080,QDRANT_URL=$QDRANT_URL" \
+  --memory 512Mi \
+  --cpu 0.25 \
+  --timeout 180 \
+  --max-instances 2 \
+  --min-instances 0 \
+  --concurrency 1 \
+  --set-env-vars="NODE_ENV=production,QDRANT_URL=$QDRANT_URL" \
   --set-secrets="INSTAGRAM_ACCESS_TOKEN=instagram-access-token:latest,INSTAGRAM_APP_SECRET=instagram-app-secret:latest,INSTAGRAM_VERIFY_TOKEN=instagram-verify-token:latest,GEMINI_API_KEY=gemini-api-key:latest,GOOGLE_CUSTOM_SEARCH_API_KEY=google-search-api-key:latest,GOOGLE_CUSTOM_SEARCH_ENGINE_ID=google-search-engine-id:latest,WHATSAPP_ACCESS_TOKEN=whatsapp-access-token:latest,WHATSAPP_VERIFY_TOKEN=whatsapp-verify-token:latest,WHATSAPP_PHONE_NUMBER_ID=whatsapp-phone-number-id:latest,QDRANT_API_KEY=qdrant-api-key:latest,VECTOR_CACHE_COLLECTION=vector-cache-collection:latest"
+```
 
+**Note**: Cloud Run has CPU/memory/concurrency constraints:
+- **0.25 CPU**: 128Mi - 512Mi memory, concurrency must be 1 (current configuration - cost-optimized)
+- **1 CPU**: 128Mi - 4Gi memory, concurrency up to 80 (recommended for video/image processing)
+- **2+ CPU**: 512Mi - 8Gi memory, concurrency up to 80 (for heavy workloads)
+
+**Important**: With CPU < 1, concurrency must be 1. For higher concurrency, increase CPU to at least 1.
+
+If you need more memory or higher concurrency (e.g., for processing videos/images), increase CPU:
+```bash
+# Alternative with more resources (allows higher concurrency)
+--memory 2Gi \
+--cpu 1 \
+--concurrency 80 \
+```
+
+```bash
 # Get Cloud Run URL
 export CLOUD_RUN_URL=$(gcloud run services describe instagram-bot \
   --platform managed \
@@ -553,7 +589,7 @@ Your application uses these environment variables for vector caching:
 | `QDRANT_API_KEY` | ⚠️ Optional | API key for Qdrant Cloud | `your-api-key` |
 | `VECTOR_CACHE_COLLECTION` | ⚠️ Optional | Collection name (default: `fact_checks`) | `fact_checks` |
 | `NODE_ENV` | ✅ Yes | Environment (set to `production`) | `production` |
-| `PORT` | ✅ Yes | Server port (set to `8080`) | `8080` |
+| `PORT` | ⚠️ Auto-set | Server port (automatically set by Cloud Run, do NOT configure) | N/A |
 
 **Vector Cache Configuration** (in code, not configurable via env):
 - **Similarity Threshold**: `0.85` (85% similarity required)

@@ -49,10 +49,15 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY package.json package-lock.json* ./
 
 # Install dependencies
-RUN npm ci --only=production && npm cache clean --force
+# Use npm ci if package-lock.json exists, otherwise fallback to npm install
+RUN if [ -f package-lock.json ]; then \
+      npm ci --omit=dev && npm cache clean --force; \
+    else \
+      npm install --production && npm cache clean --force; \
+    fi
 
 # Copy application code
 COPY . .
