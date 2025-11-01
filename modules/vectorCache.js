@@ -1,5 +1,6 @@
 const { QdrantClient } = require('@qdrant/js-client-rest');
-const { pipeline } = require('@xenova/transformers');
+// @xenova/transformers removed - vector cache is disabled for performance
+// const { pipeline } = require('@xenova/transformers');
 const { v4: uuidv4 } = require('uuid');
 
 // Initialize Qdrant client
@@ -30,10 +31,11 @@ const initializeQdrant = async () => {
     await qdrantClient.getCollections();
     console.log('[VECTOR_CACHE] ✅ Qdrant client connected successfully');
     
-    // Initialize embedding pipeline
-    console.log('[VECTOR_CACHE] Loading embedding model (all-MiniLM-L6-v2)...');
-    embeddingPipeline = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
-    console.log('[VECTOR_CACHE] ✅ Embedding pipeline loaded successfully');
+    // Initialize embedding pipeline (DISABLED - @xenova/transformers removed)
+    // console.log('[VECTOR_CACHE] Loading embedding model (all-MiniLM-L6-v2)...');
+    // embeddingPipeline = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+    // console.log('[VECTOR_CACHE] ✅ Embedding pipeline loaded successfully');
+    console.log('[VECTOR_CACHE] Embedding pipeline disabled - vector cache not in use');
     
     // Create collection if it doesn't exist
     await createCollectionIfNotExists();
@@ -78,7 +80,7 @@ const createCollectionIfNotExists = async () => {
 const generateEmbedding = async (text) => {
   try {
     if (!embeddingPipeline) {
-      throw new Error('Embedding pipeline not initialized');
+      throw new Error('Embedding pipeline not initialized (vector cache disabled)');
     }
     
     // Clean and truncate text for embedding

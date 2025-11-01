@@ -19,7 +19,6 @@
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
     "@qdrant/js-client-rest": "^1.7.0",
-    "@xenova/transformers": "^2.6.2",
     "axios": "^1.6.0",
     "body-parser": "^1.20.2",
     "cheerio": "^1.1.2",
@@ -30,7 +29,6 @@
     "fs-extra": "^11.2.0",
     "node-cron": "^3.0.2",
     "node-fetch": "^3.3.2",
-    "puppeteer": "^21.5.2",
     "uuid": "^9.0.1"
   },
   "devDependencies": {

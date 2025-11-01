@@ -61,10 +61,9 @@ RUN npm config set fetch-retries 2 && \
     npm config set registry https://registry.npmjs.org/
 
 # Install dependencies with optimizations
-# Note: @xenova/transformers downloads large ML models (can take 10+ min)
-# Since vector cache is disabled, it won't be used but still installed
+# @xenova/transformers and puppeteer removed (not needed)
 RUN echo "Starting npm install..." && \
-    echo "This step installs heavy packages (@xenova/transformers, puppeteer) and may take 15-20 minutes..." && \
+    echo "Installing dependencies (faster without @xenova/transformers and puppeteer)..." && \
     echo "Timestamp: $(date)" && \
     if [ -f package-lock.json ]; then \
       echo "Using package-lock.json, running npm ci..." && \
