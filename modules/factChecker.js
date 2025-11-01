@@ -503,28 +503,56 @@ const downloadVideo = async (videoUrl, fileName) => {
   const filePath = path.join(tempDir, fileName);
   
   try {
+    console.log(`📡 Starting video download...`);
     const response = await axios({
       method: 'GET',
       url: videoUrl,
       responseType: 'stream',
-            headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      timeout: 60000, // 60 second timeout
+      maxRedirects: 5,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.instagram.com/'
       }
     });
+    
+    console.log(`📥 Response status: ${response.status}, content-type: ${response.headers['content-type']}`);
+    
+    if (response.status !== 200) {
+      throw new Error(`Failed to download video: HTTP ${response.status}`);
+    }
     
     const writer = fs.createWriteStream(filePath);
     response.data.pipe(writer);
     
     return new Promise((resolve, reject) => {
+      let bytesDownloaded = 0;
+      
+      response.data.on('data', (chunk) => {
+        bytesDownloaded += chunk.length;
+      });
+      
       writer.on('finish', () => {
-        console.log(`✅ Video downloaded: ${filePath}`);
+        console.log(`✅ Video downloaded: ${filePath} (${bytesDownloaded} bytes)`);
         resolve(filePath);
       });
-      writer.on('error', reject);
+      
+      writer.on('error', (error) => {
+        console.error('❌ File write error:', error);
+        reject(error);
+      });
+      
+      response.data.on('error', (error) => {
+        console.error('❌ Download stream error:', error);
+        reject(error);
+      });
     });
-        } catch (error) {
-    console.error('❌ Error downloading video:', error);
-    throw error;
+  } catch (error) {
+    console.error('❌ Error downloading video:', error.message);
+    console.error('❌ Error details:', error.response?.status, error.response?.statusText);
+    throw new Error(`Failed to download video: ${error.message}`);
   }
 };
 
@@ -941,9 +969,23 @@ const processInstagramReel = async (senderId, attachment) => {
   
   console.log(`🎬 [${reelId}] COMPREHENSIVE Instagram reel processing for user: ${senderId}`);
   console.log(`📱 [${reelId}] Video + Audio + Google Custom Search (no Reddit, no broken APIs)`);
+  console.log(`📦 [${reelId}] Attachment data:`, JSON.stringify(attachment, null, 2));
   
-  if (attachment.type !== 'ig_reel' || !attachment.payload?.url) {
-    throw new Error(`[${reelId}] Invalid Instagram reel attachment`);
+  if (!attachment || typeof attachment !== 'object') {
+    throw new Error(`[${reelId}] Invalid attachment: attachment is ${typeof attachment}`);
+  }
+  
+  if (attachment.type !== 'ig_reel') {
+    throw new Error(`[${reelId}] Invalid attachment type: expected 'ig_reel', got '${attachment.type}'`);
+  }
+  
+  if (!attachment.payload) {
+    throw new Error(`[${reelId}] Invalid attachment: missing payload`);
+  }
+  
+  if (!attachment.payload.url) {
+    console.error(`[${reelId}] Missing video URL in payload:`, JSON.stringify(attachment.payload, null, 2));
+    throw new Error(`[${reelId}] Invalid Instagram reel attachment: missing URL in payload`);
   }
   
   const videoUrl = attachment.payload.url;
@@ -1015,15 +1057,22 @@ const processInstagramReel = async (senderId, attachment) => {
     
     console.log(`✅ [${reelId}] Extracted claim: "${claim}"`);
     
-    // STEP 5: Check vector cache for similar claims first
+    // STEP 5: Check vector cache for similar claims first (NON-BLOCKING - will skip if it fails)
     console.log(`🔍 [${reelId}] Checking vector cache for similar claims...`);
     let cachedResult = null;
     let cacheHit = false;
     let similarClaim = null;
     
+    // Make vector cache check non-blocking with timeout
     if (vectorCache.isReady()) {
       try {
-        similarClaim = await vectorCache.searchSimilarClaims(claim, transcription, rawCaption);
+        // Set a timeout to prevent hanging
+        const cacheCheck = Promise.race([
+          vectorCache.searchSimilarClaims(claim, transcription, rawCaption),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Vector cache timeout')), 5000))
+        ]);
+        
+        similarClaim = await cacheCheck;
         
         if (similarClaim && !similarClaim.stale) {
           // Fresh cached result found
@@ -1036,7 +1085,8 @@ const processInstagramReel = async (senderId, attachment) => {
           console.log(`[VECTOR_CACHE] No similar claims found, running fresh fact-check`);
         }
       } catch (error) {
-        console.log(`[VECTOR_CACHE] Error checking cache: ${error.message}, running fresh fact-check`);
+        console.log(`[VECTOR_CACHE] Skipping cache check (non-blocking): ${error.message}, running fresh fact-check`);
+        // Continue without cache - don't throw error
       }
     } else {
       console.log(`[VECTOR_CACHE] Vector cache not ready, running fresh fact-check`);
@@ -1070,18 +1120,25 @@ const processInstagramReel = async (senderId, attachment) => {
       console.log(`📊 [${reelId}] Found ${factCheckResults.length} sources, analyzing...`);
       
       // STEP 7: Enhanced analysis with video context
-      analysis = await analyzeFactChecks(factCheckResults, claim, videoAnalysis);
+      analysis = await analyzeFactChecks(factCheckResults, claim);
     }
     
     console.log(`✅ [${reelId}] COMPLETE: ${analysis.verdict} (${analysis.confidence})`);
     
-    // STEP 8: Store in vector cache if not from cache
+    // STEP 8: Store in vector cache if not from cache (NON-BLOCKING - will skip if it fails)
     if (!cacheHit && vectorCache.isReady()) {
       try {
-        await vectorCache.storeFactCheck(claim, transcription, rawCaption, analysis, senderId, reelId);
+        // Set a timeout to prevent hanging
+        const storeCache = Promise.race([
+          vectorCache.storeFactCheck(claim, transcription, rawCaption, analysis, senderId, reelId),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Vector cache store timeout')), 5000))
+        ]);
+        
+        await storeCache;
         console.log(`[VECTOR_CACHE] ✅ Stored new fact-check in vector database`);
       } catch (error) {
-        console.log(`[VECTOR_CACHE] ❌ Error storing in vector cache: ${error.message}`);
+        console.log(`[VECTOR_CACHE] Skipping cache storage (non-blocking): ${error.message}`);
+        // Continue without storing in cache - don't throw error
       }
     }
     

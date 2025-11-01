@@ -78,6 +78,10 @@ const setupCleanupJob = () => {
   // Run cleanup every 30 minutes
   cron.schedule('*/30 * * * *', async () => {
     try {
+      if (!vectorCache.isReady()) {
+        console.log('[CLEANUP] Vector cache not ready, skipping cleanup');
+        return;
+      }
       console.log('[CLEANUP] Starting vector cache cleanup...');
       const result = await vectorCache.cleanupExpiredEntries();
       console.log(`[CLEANUP] Cleanup complete: ${result.deleted}/${result.total} entries removed`);

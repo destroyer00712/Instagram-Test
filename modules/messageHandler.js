@@ -380,7 +380,18 @@ const processTextMessage = async (senderId, messageText) => {
     
   } catch (error) {
     console.error(`❌ Error processing text message from ${senderId}:`, error);
-    await instagramAPI.sendMessage(senderId, "Sorry, I encountered an error. Please try again.");
+    console.error(`❌ Error details:`, {
+      message: error.message,
+      code: error.code,
+      isTimeout: error.code === 'ETIMEDOUT'
+    });
+    
+    // Try to send error message, but don't fail if this also times out
+    try {
+      await instagramAPI.sendMessage(senderId, "Sorry, I encountered an error. Please try again.");
+    } catch (sendError) {
+      console.error(`❌ Failed to send error message (timeout likely):`, sendError.message);
+    }
   }
 };
 
@@ -401,10 +412,13 @@ const processAttachment = async (senderId, attachments) => {
       await instagramAPI.sendMessage(senderId, botResponses.factCheckProcessing);
       
       try {
+        console.log(`🔄 Starting reel processing for ${senderId}...`);
         // Process the reel for fact-checking
         const result = await factChecker.processInstagramReel(senderId, igReel);
+        console.log(`✅ Reel processing completed for ${senderId}, success: ${result.success}`);
         
         if (result.success) {
+          console.log(`📤 Sending fact-check result to ${senderId}...`);
           // Update conversation context for the new reel
           updateContextForNewReel(senderId, result.reelId, result.claim);
           
@@ -416,14 +430,30 @@ const processAttachment = async (senderId, attachments) => {
           };
           const responseMessage = botResponses.factCheckComplete(result.claim, result.analysis, result.captionInfo, cacheInfo);
           await instagramAPI.sendMessage(senderId, responseMessage);
+          console.log(`✅ Fact-check response sent to ${senderId}`);
         } else {
+          console.log(`📤 Sending 'no claim found' message to ${senderId}...`);
           // No claims found - provide detailed feedback about what was analyzed
           await instagramAPI.sendMessage(senderId, botResponses.noClaimFound(result));
+          console.log(`✅ 'No claim found' message sent to ${senderId}`);
         }
         
       } catch (factCheckError) {
         console.error(`❌ Fact-check error for ${senderId}:`, factCheckError);
-        await instagramAPI.sendMessage(senderId, botResponses.factCheckError);
+        console.error(`❌ Error stack:`, factCheckError.stack?.substring(0, 1000));
+        console.error(`❌ Error details:`, {
+          message: factCheckError.message,
+          code: factCheckError.code,
+          isTimeout: factCheckError.code === 'ETIMEDOUT'
+        });
+        
+        try {
+          await instagramAPI.sendMessage(senderId, botResponses.factCheckError);
+          console.log(`✅ Error message sent to ${senderId}`);
+        } catch (sendError) {
+          console.error(`❌ Failed to send error message to ${senderId} (timeout likely):`, sendError.message);
+          console.error(`❌ Send error code:`, sendError.code);
+        }
       }
       
     } else {
@@ -439,7 +469,19 @@ const processAttachment = async (senderId, attachments) => {
     
   } catch (error) {
     console.error(`❌ Error processing attachment from ${senderId}:`, error);
-    await instagramAPI.sendMessage(senderId, "Sorry, I had trouble processing that attachment. Please try again.");
+    console.error(`❌ Error details:`, {
+      message: error.message,
+      code: error.code,
+      isTimeout: error.code === 'ETIMEDOUT',
+      stack: error.stack?.substring(0, 500)
+    });
+    
+    // Try to send error message, but don't fail if this also times out
+    try {
+      await instagramAPI.sendMessage(senderId, "Sorry, I had trouble processing that attachment. Please try again.");
+    } catch (sendError) {
+      console.error(`❌ Failed to send error message (timeout likely):`, sendError.message);
+    }
   }
 };
 

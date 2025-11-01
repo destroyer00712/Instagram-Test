@@ -48,6 +48,38 @@ const rateLimiter = {
   }
 };
 
+// Retry configuration for API calls
+const RETRY_CONFIG = {
+  maxRetries: 3,
+  retryDelay: 1000, // 1 second initial delay
+  timeout: 30000 // 30 second timeout per request
+};
+
+/**
+ * Retry helper with exponential backoff
+ */
+const retryRequest = async (requestFn, retries = RETRY_CONFIG.maxRetries) => {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await requestFn();
+    } catch (error) {
+      const isLastAttempt = attempt === retries;
+      const isTimeoutError = error.code === 'ETIMEDOUT' || error.message?.includes('timeout');
+      const isConnectionError = error.code === 'ECONNREFUSED' || error.code === 'ECONNRESET';
+      
+      // Don't retry on last attempt or non-retryable errors
+      if (isLastAttempt || (!isTimeoutError && !isConnectionError)) {
+        throw error;
+      }
+      
+      // Exponential backoff: wait 1s, 2s, 4s
+      const delay = RETRY_CONFIG.retryDelay * Math.pow(2, attempt);
+      console.log(`⚠️ Request failed (attempt ${attempt + 1}/${retries + 1}), retrying in ${delay}ms...`, error.code);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+};
+
 /**
  * Split long message into Instagram-compliant chunks
  */
@@ -139,12 +171,25 @@ const sendSingleMessage = async (recipientId, messageText) => {
   };
   
   try {
-    const response = await axios.post(url, data, { headers });
+    console.log(`📡 Sending message to Instagram API (timeout: ${RETRY_CONFIG.timeout}ms)...`);
+    const response = await retryRequest(async () => {
+      return await axios.post(url, data, { 
+        headers,
+        timeout: RETRY_CONFIG.timeout,
+        validateStatus: (status) => status < 500 // Don't throw on 4xx errors
+      });
+    });
+    
+    if (response.status >= 400) {
+      console.error(`❌ Instagram API error ${response.status}:`, response.data);
+      throw new Error(`Instagram API returned ${response.status}: ${JSON.stringify(response.data)}`);
+    }
     
     console.log(`✅ Message sent (${messageText.length} chars):`, response.data);
     return response.data;
   } catch (error) {
     console.error('❌ Error sending message:', error.response?.data || error.message);
+    console.error('❌ Error code:', error.code, '| Timeout:', error.code === 'ETIMEDOUT');
     throw error;
   }
 };
@@ -235,12 +280,25 @@ const sendQuickReply = async (recipientId, messageText, quickReplies) => {
   };
   
   try {
-    const response = await axios.post(url, data, { headers });
+    console.log(`📡 Sending quick reply to Instagram API (timeout: ${RETRY_CONFIG.timeout}ms)...`);
+    const response = await retryRequest(async () => {
+      return await axios.post(url, data, { 
+        headers,
+        timeout: RETRY_CONFIG.timeout,
+        validateStatus: (status) => status < 500
+      });
+    });
+    
+    if (response.status >= 400) {
+      console.error(`❌ Instagram API error ${response.status}:`, response.data);
+      throw new Error(`Instagram API returned ${response.status}: ${JSON.stringify(response.data)}`);
+    }
     
     console.log('✅ Quick reply sent successfully:', response.data);
     return response.data;
   } catch (error) {
     console.error('❌ Error sending quick reply:', error.response?.data || error.message);
+    console.error('❌ Error code:', error.code, '| Timeout:', error.code === 'ETIMEDOUT');
     throw error;
   }
 };
@@ -272,11 +330,18 @@ const sendTypingIndicator = async (recipientId, action = 'typing_on') => {
   console.log(curlCommand);
   
   try {
-    await axios.post(url, data, { headers });
+    await retryRequest(async () => {
+      return await axios.post(url, data, { 
+        headers,
+        timeout: RETRY_CONFIG.timeout,
+        validateStatus: (status) => status < 500
+      });
+    }, 2); // Only 2 retries for typing indicator (non-critical)
     
     console.log(`✅ Typing indicator sent: ${action}`);
   } catch (error) {
-    console.error('❌ Error sending typing indicator:', error.response?.data || error.message);
+    console.error('❌ Error sending typing indicator (non-critical):', error.response?.data || error.message);
+    // Don't throw - typing indicator is non-critical
   }
 };
 
@@ -292,18 +357,27 @@ const getUserProfile = async (userId) => {
   }
   
   try {
-    const response = await axios.get(
-      `${BASE_URL}/${userId}`,
-      {
-        params: {
-          fields: 'name,profile_pic',
-          access_token: process.env.INSTAGRAM_ACCESS_TOKEN
-        },
-        headers: {
-          'Accept-Language': 'en-US,en;q=0.9'
+    const response = await retryRequest(async () => {
+      return await axios.get(
+        `${BASE_URL}/${userId}`,
+        {
+          params: {
+            fields: 'name,profile_pic',
+            access_token: process.env.INSTAGRAM_ACCESS_TOKEN
+          },
+          headers: {
+            'Accept-Language': 'en-US,en;q=0.9'
+          },
+          timeout: RETRY_CONFIG.timeout,
+          validateStatus: (status) => status < 500
         }
-      }
-    );
+      );
+    });
+    
+    if (response.status >= 400) {
+      console.error(`❌ Instagram API error ${response.status}:`, response.data);
+      throw new Error(`Instagram API returned ${response.status}`);
+    }
     
     console.log('✅ User profile retrieved:', response.data);
     return response.data;
@@ -338,18 +412,27 @@ const getConversationHistory = async (userId) => {
   }
   
   try {
-    const response = await axios.get(
-      `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/conversations`,
-      {
-        params: {
-          user_id: userId,
-          access_token: process.env.INSTAGRAM_ACCESS_TOKEN
-        },
-        headers: {
-          'Accept-Language': 'en-US,en;q=0.9'
+    const response = await retryRequest(async () => {
+      return await axios.get(
+        `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/conversations`,
+        {
+          params: {
+            user_id: userId,
+            access_token: process.env.INSTAGRAM_ACCESS_TOKEN
+          },
+          headers: {
+            'Accept-Language': 'en-US,en;q=0.9'
+          },
+          timeout: RETRY_CONFIG.timeout,
+          validateStatus: (status) => status < 500
         }
-      }
-    );
+      );
+    });
+    
+    if (response.status >= 400) {
+      console.error(`❌ Instagram API error ${response.status}:`, response.data);
+      throw new Error(`Instagram API returned ${response.status}`);
+    }
     
     console.log('✅ Conversation history retrieved');
     return response.data;
