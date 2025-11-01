@@ -7,6 +7,9 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const cheerio = require('cheerio');
 const vectorCache = require('./vectorCache');
 
+// DISABLE VECTOR CACHE FOR PERFORMANCE - Set to false to completely skip vector DB operations
+const ENABLE_VECTOR_CACHE = false;
+
 // Initialize Gemini AI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -1057,14 +1060,14 @@ const processInstagramReel = async (senderId, attachment) => {
     
     console.log(`✅ [${reelId}] Extracted claim: "${claim}"`);
     
-    // STEP 5: Check vector cache for similar claims first (NON-BLOCKING - will skip if it fails)
-    console.log(`🔍 [${reelId}] Checking vector cache for similar claims...`);
+    // STEP 5: Check vector cache for similar claims (DISABLED FOR PERFORMANCE)
     let cachedResult = null;
     let cacheHit = false;
     let similarClaim = null;
     
-    // Make vector cache check non-blocking with timeout
-    if (vectorCache.isReady()) {
+    // Vector cache is disabled for performance - skip all cache operations
+    if (ENABLE_VECTOR_CACHE && vectorCache.isReady()) {
+      console.log(`🔍 [${reelId}] Checking vector cache for similar claims...`);
       try {
         // Set a timeout to prevent hanging
         const cacheCheck = Promise.race([
@@ -1089,7 +1092,11 @@ const processInstagramReel = async (senderId, attachment) => {
         // Continue without cache - don't throw error
       }
     } else {
-      console.log(`[VECTOR_CACHE] Vector cache not ready, running fresh fact-check`);
+      if (!ENABLE_VECTOR_CACHE) {
+        console.log(`⚡ [${reelId}] Vector cache disabled for performance, running fresh fact-check`);
+      } else {
+        console.log(`[VECTOR_CACHE] Vector cache not ready, running fresh fact-check`);
+      }
     }
     
     let factCheckResults = [];
@@ -1125,8 +1132,8 @@ const processInstagramReel = async (senderId, attachment) => {
     
     console.log(`✅ [${reelId}] COMPLETE: ${analysis.verdict} (${analysis.confidence})`);
     
-    // STEP 8: Store in vector cache if not from cache (NON-BLOCKING - will skip if it fails)
-    if (!cacheHit && vectorCache.isReady()) {
+    // STEP 8: Store in vector cache (DISABLED FOR PERFORMANCE)
+    if (ENABLE_VECTOR_CACHE && !cacheHit && vectorCache.isReady()) {
       try {
         // Set a timeout to prevent hanging
         const storeCache = Promise.race([
@@ -1140,6 +1147,8 @@ const processInstagramReel = async (senderId, attachment) => {
         console.log(`[VECTOR_CACHE] Skipping cache storage (non-blocking): ${error.message}`);
         // Continue without storing in cache - don't throw error
       }
+    } else if (!ENABLE_VECTOR_CACHE) {
+      // Vector cache disabled - skip silently for performance
     }
     
     // STEP 9: Store comprehensive result in user history

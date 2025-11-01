@@ -61,8 +61,15 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// Initialize vector cache
+// DISABLE VECTOR CACHE FOR PERFORMANCE - Set to true to enable vector DB caching
+const ENABLE_VECTOR_CACHE = false;
+
 const initializeVectorCache = async () => {
+  if (!ENABLE_VECTOR_CACHE) {
+    console.log('⚡ Vector cache disabled for performance');
+    return;
+  }
+  
   try {
     console.log('🔧 Initializing vector cache...');
     await vectorCache.initializeQdrant();
@@ -74,7 +81,13 @@ const initializeVectorCache = async () => {
 };
 
 // Setup vector cache cleanup cron job
+
 const setupCleanupJob = () => {
+  if (!ENABLE_VECTOR_CACHE) {
+    console.log('⚡ Vector cache cleanup job disabled (vector cache is disabled)');
+    return;
+  }
+  
   // Run cleanup every 30 minutes
   cron.schedule('*/30 * * * *', async () => {
     try {
