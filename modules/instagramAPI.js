@@ -1,4 +1,6 @@
 const axios = require('axios');
+const http = require('http');
+const https = require('https');
 
 // Instagram Graph API base URL
 const BASE_URL = 'https://graph.instagram.com/v23.0';
@@ -52,8 +54,28 @@ const rateLimiter = {
 const RETRY_CONFIG = {
   maxRetries: 3,
   retryDelay: 1000, // 1 second initial delay
-  timeout: 30000 // 30 second timeout per request
+  timeout: 45000 // 45 second timeout per request (increased for GCP)
 };
+
+// Configure axios instance with better defaults for GCP/Cloud Run
+const axiosInstance = axios.create({
+  timeout: RETRY_CONFIG.timeout,
+  // Keep connections alive for better performance in GCP
+  httpAgent: new http.Agent({ 
+    keepAlive: true,
+    keepAliveMsecs: 30000,
+    maxSockets: 50,
+    maxFreeSockets: 10,
+    timeout: RETRY_CONFIG.timeout
+  }),
+  httpsAgent: new https.Agent({ 
+    keepAlive: true,
+    keepAliveMsecs: 30000,
+    maxSockets: 50,
+    maxFreeSockets: 10,
+    timeout: RETRY_CONFIG.timeout
+  })
+});
 
 /**
  * Retry helper with exponential backoff
@@ -65,7 +87,12 @@ const retryRequest = async (requestFn, retries = RETRY_CONFIG.maxRetries) => {
     } catch (error) {
       const isLastAttempt = attempt === retries;
       const isTimeoutError = error.code === 'ETIMEDOUT' || error.message?.includes('timeout');
-      const isConnectionError = error.code === 'ECONNREFUSED' || error.code === 'ECONNRESET';
+      // ECONNABORTED is common in GCP and should be retried (connection aborted before completion)
+      const isConnectionError = error.code === 'ECONNREFUSED' || 
+                                error.code === 'ECONNRESET' || 
+                                error.code === 'ECONNABORTED' ||
+                                error.code === 'ENOTFOUND' ||
+                                error.code === 'EAI_AGAIN';
       
       // Don't retry on last attempt or non-retryable errors
       if (isLastAttempt || (!isTimeoutError && !isConnectionError)) {
@@ -173,7 +200,7 @@ const sendSingleMessage = async (recipientId, messageText) => {
   try {
     console.log(`📡 Sending message to Instagram API (timeout: ${RETRY_CONFIG.timeout}ms)...`);
     const response = await retryRequest(async () => {
-      return await axios.post(url, data, { 
+      return await axiosInstance.post(url, data, { 
         headers,
         timeout: RETRY_CONFIG.timeout,
         validateStatus: (status) => status < 500 // Don't throw on 4xx errors
@@ -282,7 +309,7 @@ const sendQuickReply = async (recipientId, messageText, quickReplies) => {
   try {
     console.log(`📡 Sending quick reply to Instagram API (timeout: ${RETRY_CONFIG.timeout}ms)...`);
     const response = await retryRequest(async () => {
-      return await axios.post(url, data, { 
+      return await axiosInstance.post(url, data, { 
         headers,
         timeout: RETRY_CONFIG.timeout,
         validateStatus: (status) => status < 500
@@ -331,7 +358,7 @@ const sendTypingIndicator = async (recipientId, action = 'typing_on') => {
   
   try {
     await retryRequest(async () => {
-      return await axios.post(url, data, { 
+      return await axiosInstance.post(url, data, { 
         headers,
         timeout: RETRY_CONFIG.timeout,
         validateStatus: (status) => status < 500
@@ -358,7 +385,7 @@ const getUserProfile = async (userId) => {
   
   try {
     const response = await retryRequest(async () => {
-      return await axios.get(
+      return await axiosInstance.get(
         `${BASE_URL}/${userId}`,
         {
           params: {
@@ -413,7 +440,7 @@ const getConversationHistory = async (userId) => {
   
   try {
     const response = await retryRequest(async () => {
-      return await axios.get(
+      return await axiosInstance.get(
         `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/conversations`,
         {
           params: {
