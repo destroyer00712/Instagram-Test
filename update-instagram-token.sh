@@ -57,8 +57,19 @@ fi
 
 echo ""
 
-# Step 2: Update Cloud Run service to force restart (picks up latest secret)
+# Step 2: Remove old env var (if exists) and set as secret
 echo -e "${YELLOW}Step 2: Updating Cloud Run service to use new secret...${NC}"
+
+# First, try to remove it as env var (ignore error if it doesn't exist)
+echo -e "${BLUE}   Removing old environment variable (if exists)...${NC}"
+gcloud run services update "$SERVICE_NAME" \
+    --platform managed \
+    --region "$REGION" \
+    --remove-env-vars="INSTAGRAM_ACCESS_TOKEN" \
+    --quiet 2>/dev/null || true
+
+# Now set it as a secret
+echo -e "${BLUE}   Setting as secret...${NC}"
 gcloud run services update "$SERVICE_NAME" \
     --platform managed \
     --region "$REGION" \
