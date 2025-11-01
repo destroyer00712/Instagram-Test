@@ -48,27 +48,37 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy package files
+# Copy package files first for better layer caching
 COPY package.json package-lock.json* ./
 
-# Configure npm for better reliability with longer timeouts for large packages
-RUN npm config set fetch-retries 5 && \
-    npm config set fetch-retry-mintimeout 20000 && \
-    npm config set fetch-retry-maxtimeout 120000 && \
-    npm config set fetch-timeout 600000
+# Configure npm for faster installs
+RUN npm config set fetch-retries 2 && \
+    npm config set fetch-retry-mintimeout 5000 && \
+    npm config set fetch-retry-maxtimeout 30000 && \
+    npm config set fetch-timeout 180000 && \
+    npm config set progress false && \
+    npm config set loglevel warn && \
+    npm config set registry https://registry.npmjs.org/
 
-# Install dependencies
-# Use npm ci if package-lock.json exists, otherwise fallback to npm install
-# This step can take 10-15 minutes due to puppeteer (Chromium) and transformers downloads
+# Install dependencies with optimizations
+# Note: @xenova/transformers downloads large ML models (can take 10+ min)
+# Since vector cache is disabled, it won't be used but still installed
 RUN echo "Starting npm install..." && \
+    echo "This step installs heavy packages (@xenova/transformers, puppeteer) and may take 15-20 minutes..." && \
+    echo "Timestamp: $(date)" && \
     if [ -f package-lock.json ]; then \
-      npm ci --omit=dev --prefer-offline --no-audit || \
-      (echo "npm ci failed, trying npm install..." && npm install --production --prefer-offline --no-audit); \
+      echo "Using package-lock.json, running npm ci..." && \
+      npm ci --omit=dev --no-audit --no-fund --prefer-offline || \
+      (echo "npm ci failed, falling back to npm install..." && \
+       npm install --production --no-audit --no-fund --legacy-peer-deps --no-save); \
     else \
-      npm install --production --prefer-offline --no-audit; \
+      echo "No package-lock.json, running npm install..." && \
+      npm install --production --no-audit --no-fund --legacy-peer-deps --no-save; \
     fi && \
-    echo "npm install completed" && \
-    npm cache clean --force
+    echo "npm install completed! Timestamp: $(date)" && \
+    echo "Cleaning npm cache..." && \
+    npm cache clean --force && \
+    echo "Dependencies installed successfully!"
 
 # Copy application code
 COPY . .
