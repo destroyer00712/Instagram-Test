@@ -87,17 +87,17 @@ RUN mkdir -p temp/videos temp/frames temp/audio
 
 # Set environment variables
 ENV NODE_ENV=production
-ENV PORT=3000
+# PORT is set automatically by Cloud Run (don't override it)
 ENV TEMP_VIDEO_DIR=./temp/videos/
 ENV TEMP_FRAMES_DIR=./temp/frames/
 ENV TEMP_AUDIO_DIR=./temp/audio/
 
-# Expose port
-EXPOSE 3000
+# Expose port (Cloud Run uses PORT env var, default 8080)
+EXPOSE 8080
 
-# Health check
+# Health check (uses PORT env var, defaults to 8080)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+    CMD node -e "const port = process.env.PORT || 8080; require('http').get('http://localhost:' + port + '/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
 # Run the application
 CMD ["node", "server.js"]
