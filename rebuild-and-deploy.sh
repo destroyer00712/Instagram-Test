@@ -1,50 +1,24 @@
 #!/bin/bash
 
-# Fast Rebuild Script - Uses optimized Dockerfile
-# This removes heavy dependencies (@xenova/transformers) that aren't needed since vector cache is disabled
+# Simple rebuild and deploy script
+# Uses the existing Dockerfile
 
 set -e
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
 
 PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
 
 if [ -z "$PROJECT_ID" ]; then
-    echo -e "${RED}❌ No default project set${NC}"
+    echo "❌ No default project set"
     exit 1
 fi
 
-echo -e "${GREEN}🚀 Fast Rebuild (Skipping Heavy Dependencies)${NC}"
-echo -e "${BLUE}   Removing @xenova/transformers and @qdrant/js-client-rest${NC}"
+echo "🚀 Building and deploying..."
 echo ""
 
-# Option 1: Use Cloud Build with fast Dockerfile
-echo -e "${YELLOW}Option 1: Using Cloud Build with fast Dockerfile...${NC}"
-echo -e "${BLUE}   This removes heavy packages and should be 5-10x faster${NC}"
-echo ""
+# Build and push with Cloud Build
+gcloud builds submit --tag gcr.io/$PROJECT_ID/instagram-bot:latest --quiet
 
-# Backup original Dockerfile
-cp Dockerfile Dockerfile.backup
-
-# Use fast Dockerfile
-cp Dockerfile.fast Dockerfile
-
-# Build with Cloud Build
-echo "Building (this should take 3-5 minutes instead of 20+)..."
-gcloud builds submit --tag gcr.io/$PROJECT_ID/instagram-bot:latest \
-    --timeout=15m \
-    --quiet
-
-# Restore original Dockerfile
-mv Dockerfile.backup Dockerfile
-
-# Deploy
-echo ""
-echo -e "${YELLOW}Deploying to Cloud Run...${NC}"
+# Deploy to Cloud Run
 gcloud run deploy instagram-bot \
     --image gcr.io/$PROJECT_ID/instagram-bot:latest \
     --platform managed \
@@ -61,5 +35,5 @@ gcloud run deploy instagram-bot \
     --quiet
 
 echo ""
-echo -e "${GREEN}✅ Fast rebuild completed!${NC}"
+echo "✅ Done!"
 
