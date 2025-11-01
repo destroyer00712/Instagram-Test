@@ -14,6 +14,10 @@ console.log('🔧 GEMINI_API_KEY length:', process.env.GEMINI_API_KEY ? process.
 console.log('🔧 GEMINI_API_KEY preview:', process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.substring(0, 15) + '...' + process.env.GEMINI_API_KEY.substring(process.env.GEMINI_API_KEY.length - 15) : 'undefined');
 console.log('🔧 GOOGLE_FACTCHECK_API_KEY exists:', !!process.env.GOOGLE_FACTCHECK_API_KEY);
 console.log('🔧 INSTAGRAM_ACCESS_TOKEN exists:', !!process.env.INSTAGRAM_ACCESS_TOKEN);
+console.log('🔧 INSTAGRAM_VERIFY_TOKEN exists:', !!process.env.INSTAGRAM_VERIFY_TOKEN);
+console.log('🔧 INSTAGRAM_VERIFY_TOKEN value:', process.env.INSTAGRAM_VERIFY_TOKEN || 'UNDEFINED');
+console.log('🔧 WEBHOOK_VERIFY_TOKEN exists:', !!process.env.WEBHOOK_VERIFY_TOKEN);
+console.log('🔧 WEBHOOK_VERIFY_TOKEN value:', process.env.WEBHOOK_VERIFY_TOKEN || 'UNDEFINED');
 
 const app = express();
 const PORT = process.env.PORT || 3000;

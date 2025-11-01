@@ -40,19 +40,23 @@ const verify = (req, res) => {
   console.log('  - Mode:', mode);
   console.log('  - Token:', token);
   console.log('  - Challenge:', challenge);
-  console.log('  - Expected Token:', process.env.WEBHOOK_VERIFY_TOKEN);
+  console.log('  - Expected Token:', process.env.INSTAGRAM_VERIFY_TOKEN || process.env.WEBHOOK_VERIFY_TOKEN);
+  
+  // Get the verify token from environment (support both naming conventions)
+  const verifyToken = process.env.INSTAGRAM_VERIFY_TOKEN || process.env.WEBHOOK_VERIFY_TOKEN;
   
   // Check if a token and mode were sent
   if (mode && token) {
     // Check the mode and token sent are correct
-    if (mode === 'subscribe' && token === process.env.WEBHOOK_VERIFY_TOKEN) {
+    if (mode === 'subscribe' && token === verifyToken) {
       console.log('✅ Webhook verified successfully!');
       console.log('📤 Sending challenge response:', challenge);
       res.status(200).send(challenge);
     } else {
       console.log('❌ Webhook verification failed - invalid token');
-      console.log('  - Expected:', process.env.WEBHOOK_VERIFY_TOKEN);
+      console.log('  - Expected:', verifyToken);
       console.log('  - Received:', token);
+      console.log('  - Match:', token === verifyToken);
       res.status(403).send('Forbidden');
     }
   } else {
