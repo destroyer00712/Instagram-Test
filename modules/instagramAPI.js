@@ -57,24 +57,16 @@ const RETRY_CONFIG = {
   timeout: 45000 // 45 second timeout per request (increased for GCP)
 };
 
-// Configure axios instance with better defaults for GCP/Cloud Run
+// Configure axios instance for GCP/Cloud Run
+// Note: Using default agents works better in Cloud Run's network layer
 const axiosInstance = axios.create({
-  timeout: RETRY_CONFIG.timeout,
-  // Keep connections alive for better performance in GCP
-  httpAgent: new http.Agent({ 
-    keepAlive: true,
-    keepAliveMsecs: 30000,
-    maxSockets: 50,
-    maxFreeSockets: 10,
-    timeout: RETRY_CONFIG.timeout
-  }),
-  httpsAgent: new https.Agent({ 
-    keepAlive: true,
-    keepAliveMsecs: 30000,
-    maxSockets: 50,
-    maxFreeSockets: 10,
-    timeout: RETRY_CONFIG.timeout
-  })
+  timeout: RETRY_CONFIG.timeout
+  // Default agents work better in serverless environments - no keep-alive needed
+});
+
+// GCP requires Metadata-Flavor header for external API requests
+const getDefaultHeaders = () => ({
+  'Metadata-Flavor': 'Google'
 });
 
 /**
@@ -200,6 +192,7 @@ const sendSingleMessage = async (recipientId, messageText) => {
   
   const url = `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/messages`;
   const headers = {
+    ...getDefaultHeaders(), // GCP required header
     'Authorization': `Bearer ${process.env.INSTAGRAM_ACCESS_TOKEN}`,
     'Content-Type': 'application/json',
     'Accept-Language': 'en-US,en;q=0.9'
@@ -224,6 +217,7 @@ const sendSingleMessage = async (recipientId, messageText) => {
   console.log(`📡 URL: ${url}`);
   console.log(`📋 Method: POST`);
   console.log(`⏱️  Timeout: ${RETRY_CONFIG.timeout}ms`);
+  console.log(`🌐 Metadata-Flavor: Google (GCP required)`);
   console.log(`🔑 Authorization: Bearer ${maskedToken}`);
   console.log(`📦 Request Body:`, JSON.stringify(data, null, 2));
   console.log(`👤 Recipient ID: ${recipientId}`);
@@ -232,6 +226,7 @@ const sendSingleMessage = async (recipientId, messageText) => {
   console.log('📋 cURL Command (copy to test locally):');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   const curlCommand = `curl --location --request POST '${url}' \\
+  --header 'Metadata-Flavor: Google' \\
   --header 'Authorization: Bearer ${process.env.INSTAGRAM_ACCESS_TOKEN}' \\
   --header 'Content-Type: application/json' \\
   --header 'Accept-Language: en-US,en;q=0.9' \\
@@ -351,6 +346,7 @@ const sendQuickReply = async (recipientId, messageText, quickReplies) => {
   
   const url = `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/messages`;
   const headers = {
+    ...getDefaultHeaders(), // GCP required header
     'Authorization': `Bearer ${process.env.INSTAGRAM_ACCESS_TOKEN}`,
     'Content-Type': 'application/json',
     'Accept-Language': 'en-US,en;q=0.9'
@@ -403,6 +399,7 @@ const sendTypingIndicator = async (recipientId, action = 'typing_on') => {
   
   const url = `${BASE_URL}/${process.env.INSTAGRAM_ACCOUNT_ID}/messages`;
   const headers = {
+    ...getDefaultHeaders(), // GCP required header
     'Authorization': `Bearer ${process.env.INSTAGRAM_ACCESS_TOKEN}`,
     'Content-Type': 'application/json',
     'Accept-Language': 'en-US,en;q=0.9'
@@ -456,6 +453,7 @@ const getUserProfile = async (userId) => {
             access_token: process.env.INSTAGRAM_ACCESS_TOKEN
           },
           headers: {
+            ...getDefaultHeaders(), // GCP required header
             'Accept-Language': 'en-US,en;q=0.9'
           },
           timeout: RETRY_CONFIG.timeout,
@@ -511,6 +509,7 @@ const getConversationHistory = async (userId) => {
             access_token: process.env.INSTAGRAM_ACCESS_TOKEN
           },
           headers: {
+            ...getDefaultHeaders(), // GCP required header
             'Accept-Language': 'en-US,en;q=0.9'
           },
           timeout: RETRY_CONFIG.timeout,
