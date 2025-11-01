@@ -1,7 +1,6 @@
 #!/bin/bash
 
-# Simple rebuild and deploy script
-# Uses the existing Dockerfile
+# Deploy only (build already completed)
 
 set -e
 
@@ -12,13 +11,9 @@ if [ -z "$PROJECT_ID" ]; then
     exit 1
 fi
 
-echo "🚀 Building and deploying..."
+echo "🚀 Deploying to Cloud Run..."
 echo ""
 
-# Build and push with Cloud Build
-gcloud builds submit --tag gcr.io/$PROJECT_ID/instagram-bot:latest --quiet
-
-# Deploy to Cloud Run
 gcloud run deploy instagram-bot \
     --image gcr.io/$PROJECT_ID/instagram-bot:latest \
     --platform managed \
@@ -35,5 +30,5 @@ gcloud run deploy instagram-bot \
     --quiet
 
 echo ""
-echo "✅ Done!"
+echo "✅ Deployment complete!"
 

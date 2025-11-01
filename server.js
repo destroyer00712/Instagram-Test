@@ -20,7 +20,7 @@ console.log('🔧 WEBHOOK_VERIFY_TOKEN exists:', !!process.env.WEBHOOK_VERIFY_TO
 console.log('🔧 WEBHOOK_VERIFY_TOKEN value:', process.env.WEBHOOK_VERIFY_TOKEN || 'UNDEFINED');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080; // Cloud Run sets PORT automatically
 
 // Middleware
 app.use(bodyParser.json());
