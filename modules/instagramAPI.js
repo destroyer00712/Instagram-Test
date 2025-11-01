@@ -83,6 +83,9 @@ const axiosInstance = axios.create({
 const retryRequest = async (requestFn, retries = RETRY_CONFIG.maxRetries) => {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
+      if (attempt > 0) {
+        console.log(`🔄 Retry attempt ${attempt}/${retries}...`);
+      }
       return await requestFn();
     } catch (error) {
       const isLastAttempt = attempt === retries;
@@ -94,8 +97,21 @@ const retryRequest = async (requestFn, retries = RETRY_CONFIG.maxRetries) => {
                                 error.code === 'ENOTFOUND' ||
                                 error.code === 'EAI_AGAIN';
       
+      // Log detailed error info on retry
+      console.error(`⚠️ Attempt ${attempt + 1}/${retries + 1} failed:`);
+      console.error(`   Error code: ${error.code}`);
+      console.error(`   Error message: ${error.message}`);
+      console.error(`   Is timeout: ${isTimeoutError}`);
+      console.error(`   Is connection error: ${isConnectionError}`);
+      
+      if (error.response) {
+        console.error(`   HTTP Status: ${error.response.status}`);
+        console.error(`   Response data:`, JSON.stringify(error.response.data, null, 2));
+      }
+      
       // Don't retry on last attempt or non-retryable errors
       if (isLastAttempt || (!isTimeoutError && !isConnectionError)) {
+        console.error(`❌ Not retrying - ${isLastAttempt ? 'last attempt reached' : 'non-retryable error'}`);
         throw error;
       }
       
@@ -197,6 +213,32 @@ const sendSingleMessage = async (recipientId, messageText) => {
     }
   };
   
+  // Log detailed API call information for debugging
+  const maskedToken = process.env.INSTAGRAM_ACCESS_TOKEN 
+    ? `${process.env.INSTAGRAM_ACCESS_TOKEN.substring(0, 10)}...${process.env.INSTAGRAM_ACCESS_TOKEN.substring(process.env.INSTAGRAM_ACCESS_TOKEN.length - 5)}`
+    : 'NOT_SET';
+  
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('🔍 INSTAGRAM API CALL DETAILS:');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log(`📡 URL: ${url}`);
+  console.log(`📋 Method: POST`);
+  console.log(`⏱️  Timeout: ${RETRY_CONFIG.timeout}ms`);
+  console.log(`🔑 Authorization: Bearer ${maskedToken}`);
+  console.log(`📦 Request Body:`, JSON.stringify(data, null, 2));
+  console.log(`👤 Recipient ID: ${recipientId}`);
+  console.log(`💬 Message Length: ${messageText.length} chars`);
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('📋 cURL Command (copy to test locally):');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  const curlCommand = `curl --location --request POST '${url}' \\
+  --header 'Authorization: Bearer ${process.env.INSTAGRAM_ACCESS_TOKEN}' \\
+  --header 'Content-Type: application/json' \\
+  --header 'Accept-Language: en-US,en;q=0.9' \\
+  --data '${JSON.stringify(data)}'`;
+  console.log(curlCommand);
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  
   try {
     console.log(`📡 Sending message to Instagram API (timeout: ${RETRY_CONFIG.timeout}ms)...`);
     const response = await retryRequest(async () => {
@@ -212,11 +254,32 @@ const sendSingleMessage = async (recipientId, messageText) => {
       throw new Error(`Instagram API returned ${response.status}: ${JSON.stringify(response.data)}`);
     }
     
-    console.log(`✅ Message sent (${messageText.length} chars):`, response.data);
+    console.log(`✅ Message sent successfully (${messageText.length} chars)`);
+    console.log(`✅ Response status: ${response.status}`);
+    console.log(`✅ Response data:`, JSON.stringify(response.data, null, 2));
     return response.data;
   } catch (error) {
-    console.error('❌ Error sending message:', error.response?.data || error.message);
-    console.error('❌ Error code:', error.code, '| Timeout:', error.code === 'ETIMEDOUT');
+    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.error('❌ ERROR DETAILS:');
+    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.error(`❌ Error code: ${error.code}`);
+    console.error(`❌ Error message: ${error.message}`);
+    console.error(`❌ Is timeout: ${error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED'}`);
+    if (error.response) {
+      console.error(`❌ Response status: ${error.response.status}`);
+      console.error(`❌ Response data:`, JSON.stringify(error.response.data, null, 2));
+      console.error(`❌ Response headers:`, JSON.stringify(error.response.headers, null, 2));
+    }
+    if (error.request) {
+      console.error(`❌ Request made but no response received`);
+      console.error(`❌ Request config:`, JSON.stringify({
+        url: error.config?.url,
+        method: error.config?.method,
+        timeout: error.config?.timeout,
+        headers: error.config?.headers ? Object.keys(error.config.headers) : null
+      }, null, 2));
+    }
+    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     throw error;
   }
 };
