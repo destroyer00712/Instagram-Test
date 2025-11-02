@@ -1206,6 +1206,591 @@ const processInstagramReel = async (senderId, attachment) => {
   }
 };
 
+/**
+ * Extract YouTube video ID from various YouTube URL formats
+ */
+const extractYouTubeVideoId = (url) => {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
+    /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/
+  ];
+  
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  return null;
+};
+
+/**
+ * Detect and extract YouTube links from text
+ */
+const detectYouTubeLink = (text) => {
+  const youtubePatterns = [
+    /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/gi
+  ];
+  
+  for (const pattern of youtubePatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      return {
+        found: true,
+        url: match[0],
+        videoId: extractYouTubeVideoId(match[0])
+      };
+    }
+  }
+  
+  return { found: false };
+};
+
+/**
+ * Extract YouTube video data using oembed API (no API key needed)
+ */
+const extractYouTubeData = async (videoUrl, videoId) => {
+  console.log(`🎥 Extracting YouTube video data for: ${videoId}`);
+  
+  try {
+    // Use YouTube oembed API to get video metadata
+    const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(videoUrl)}&format=json`;
+    const response = await axios.get(oembedUrl, { timeout: 10000 });
+    
+    if (response.data) {
+      console.log(`✅ YouTube metadata retrieved: ${response.data.title}`);
+      return {
+        title: response.data.title || '',
+        author: response.data.author_name || '',
+        thumbnail: response.data.thumbnail_url || '',
+        videoId: videoId
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.log(`❌ Error extracting YouTube data: ${error.message}`);
+    return null;
+  }
+};
+
+/**
+ * Analyze text for logical inconsistencies using AI
+ */
+const analyzeLogicalConsistency = async (text) => {
+  console.log(`🧠 Analyzing text for logical inconsistencies...`);
+  
+  if (!text || text.length < 20) {
+    return {
+      hasInconsistencies: false,
+      issues: [],
+      severity: 'low',
+      analysis: 'Text too short for meaningful analysis'
+    };
+  }
+  
+  const prompt = `You are a logical reasoning expert. Analyze this text for logical inconsistencies, contradictions, or fallacies.
+
+TEXT: "${text}"
+
+Identify:
+1. **Logical fallacies** (ad hominem, straw man, false dichotomy, etc.)
+2. **Internal contradictions** (claims that contradict each other)
+3. **Misleading statistics** (misuse of numbers or data)
+4. **Emotional manipulation** (appeals to fear, anger without evidence)
+5. **Missing context** (claims that leave out important information)
+
+SEVERITY LEVELS:
+- HIGH: Major logical flaws or deliberate misinformation tactics
+- MEDIUM: Some questionable reasoning or missing context
+- LOW: Minor issues or mostly sound reasoning
+
+OUTPUT FORMAT (JSON only):
+{
+  "hasInconsistencies": true/false,
+  "issues": ["Issue 1", "Issue 2"],
+  "severity": "HIGH|MEDIUM|LOW",
+  "analysis": "Brief explanation of the logical quality"
+}`;
+
+  try {
+    const { result } = await makeGeminiAPICall(
+      MODELS.CLAIM_ANALYSIS,
+      GENERATION_CONFIGS.HIGH_ACCURACY,
+      prompt
+    );
+    
+    const response = result.response.text().trim();
+    
+    // Clean up the response to extract JSON
+    let cleanResponse = response;
+    if (cleanResponse.includes('```json')) {
+      cleanResponse = cleanResponse.split('```json')[1].split('```')[0].trim();
+    } else if (cleanResponse.includes('```')) {
+      cleanResponse = cleanResponse.split('```')[1].split('```')[0].trim();
+    }
+    
+    try {
+      const analysis = JSON.parse(cleanResponse);
+      console.log(`✅ Logical analysis: ${analysis.hasInconsistencies ? 'ISSUES FOUND' : 'OK'} (${analysis.severity})`);
+      return analysis;
+    } catch (jsonError) {
+      console.log(`⚠️ JSON parse failed, extracting manually`);
+      return {
+        hasInconsistencies: cleanResponse.toLowerCase().includes('true'),
+        issues: [],
+        severity: 'LOW',
+        analysis: 'Could not parse detailed analysis'
+      };
+    }
+  } catch (error) {
+    console.log(`❌ Logical analysis failed: ${error.message}`);
+    return {
+      hasInconsistencies: false,
+      issues: [],
+      severity: 'low',
+      analysis: 'Analysis failed'
+    };
+  }
+};
+
+/**
+ * Extract verifiable claim from plain text
+ */
+const extractClaimFromText = async (text) => {
+  console.log(`🧠 Extracting verifiable claim from text...`);
+  
+  if (!text || text.length < 20) {
+    return 'No verifiable claim found';
+  }
+  
+  const prompt = `You are a fact-checking expert. Extract the most important FACTUAL CLAIM from this text message.
+
+TEXT: "${text}"
+
+TASK: Find the single most important factual claim that can be verified. This should be:
+1. **A specific statement** about events, people, numbers, or facts
+2. **Verifiable** - something that can be checked against news sources
+3. **Important** - the main point of the message, not minor details
+
+EXAMPLES OF GOOD CLAIMS:
+- "H1B visa fees increased to $100,000"
+- "Adani bought land for 1 rupee"
+- "Person X died yesterday"
+- "Company Y acquired Company Z for $1 billion"
+- "Government announced new policy"
+
+EXAMPLES TO IGNORE:
+- Opinions like "This policy is bad"
+- Vague statements like "Things are getting worse"
+- Questions like "What do you think?"
+- Pure conversation like "How are you?"
+
+If NO verifiable factual claim is found, return: "No verifiable claim found"
+
+OUTPUT: Return only the extracted claim as plain text, nothing else.`;
+
+  try {
+    const { result } = await makeGeminiAPICall(
+      MODELS.CLAIM_ANALYSIS,
+      GENERATION_CONFIGS.HIGH_ACCURACY,
+      prompt
+    );
+    
+    const claim = result.response.text().trim();
+    console.log(`✅ Extracted claim: "${claim}"`);
+    return claim;
+  } catch (error) {
+    console.log(`❌ Claim extraction failed: ${error.message}`);
+    return 'No verifiable claim found';
+  }
+};
+
+/**
+ * Process WhatsApp text message for fact-checking
+ */
+const processWhatsAppText = async (senderId, messageText) => {
+  const contentId = uuidv4().substring(0, 8);
+  console.log(`📝 [${contentId}] Processing WhatsApp text for user: ${senderId}`);
+  console.log(`📝 [${contentId}] Text (${messageText.length} chars): "${messageText.substring(0, 200)}${messageText.length > 200 ? '...' : ''}"`);
+  
+  try {
+    // STEP 1: Check for YouTube links
+    const youtubeCheck = detectYouTubeLink(messageText);
+    if (youtubeCheck.found) {
+      console.log(`🎥 [${contentId}] YouTube link detected: ${youtubeCheck.videoId}`);
+      
+      // Extract YouTube video data
+      const youtubeData = await extractYouTubeData(youtubeCheck.url, youtubeCheck.videoId);
+      if (youtubeData) {
+        console.log(`📹 [${contentId}] YouTube video: "${youtubeData.title}" by ${youtubeData.author}`);
+        
+        // Extract claim from YouTube video title and message text
+        const combinedText = `Video Title: ${youtubeData.title}\nMessage: ${messageText}`;
+        const claim = await extractClaimFromText(combinedText);
+        
+        if (claim === 'No verifiable claim found') {
+          return {
+            success: false,
+            message: 'No verifiable claims found in this YouTube video to fact-check.',
+            claim: claim,
+            youtubeData: youtubeData,
+            contentId: contentId
+          };
+        }
+        
+        console.log(`✅ [${contentId}] Extracted claim from YouTube: "${claim}"`);
+        
+        // Fact-check the claim
+        const factCheckResults = await searchFactChecks(claim);
+        
+        if (factCheckResults.length === 0) {
+          return {
+            success: false,
+            message: 'No reliable sources found to verify this YouTube video claim.',
+            claim: claim,
+            youtubeData: youtubeData,
+            contentId: contentId
+          };
+        }
+        
+        const analysis = await analyzeFactChecks(factCheckResults, claim);
+        
+        // Store in memory
+        if (!factCheckMemory.has(senderId)) {
+          factCheckMemory.set(senderId, []);
+        }
+        const userHistory = factCheckMemory.get(senderId);
+        userHistory.push({
+          userId: senderId,
+          result: {
+            claim: claim,
+            analysis: analysis,
+            youtubeData: youtubeData
+          },
+          timestamp: Date.now(),
+          contentId: contentId
+        });
+        
+        return {
+          success: true,
+          claim: claim,
+          analysis: analysis,
+          youtubeData: youtubeData,
+          sources: factCheckResults.length,
+          contentId: contentId,
+          mediaInfo: { type: 'youtube_video' }
+        };
+      }
+    }
+    
+    // STEP 2: Analyze text for logical inconsistencies
+    console.log(`🧠 [${contentId}] Analyzing logical consistency...`);
+    const logicalAnalysis = await analyzeLogicalConsistency(messageText);
+    console.log(`📊 [${contentId}] Logical analysis: ${logicalAnalysis.hasInconsistencies ? 'Issues found' : 'OK'} (${logicalAnalysis.severity} severity)`);
+    
+    // STEP 3: Extract verifiable claim
+    console.log(`🔍 [${contentId}] Extracting verifiable claim...`);
+    const claim = await extractClaimFromText(messageText);
+    
+    if (claim === 'No verifiable claim found') {
+      return {
+        success: false,
+        message: 'No verifiable claims found in this text to fact-check.',
+        claim: claim,
+        logicalAnalysis: logicalAnalysis,
+        contentId: contentId
+      };
+    }
+    
+    console.log(`✅ [${contentId}] Extracted claim: "${claim}"`);
+    
+    // STEP 4: Check importance - should we fact-check this?
+    const isImportant = logicalAnalysis.hasInconsistencies || 
+                       messageText.length > 50 ||
+                       /\b(news|breaking|reported|announced|confirmed|died|killed|bought|sold|policy|law)\b/i.test(messageText);
+    
+    if (!isImportant) {
+      console.log(`⚠️ [${contentId}] Claim not deemed important enough for full fact-check`);
+      return {
+        success: false,
+        message: 'This appears to be casual conversation rather than a claim requiring fact-checking.',
+        claim: claim,
+        logicalAnalysis: logicalAnalysis,
+        contentId: contentId
+      };
+    }
+    
+    // STEP 5: Search for articles and fact-check
+    console.log(`🔍 [${contentId}] Fact-checking with Google Custom Search...`);
+    const factCheckResults = await searchFactChecks(claim);
+    
+    if (factCheckResults.length === 0) {
+      return {
+        success: false,
+        message: 'No reliable sources found to verify this claim.',
+        claim: claim,
+        logicalAnalysis: logicalAnalysis,
+        contentId: contentId
+      };
+    }
+    
+    console.log(`📊 [${contentId}] Found ${factCheckResults.length} sources, analyzing...`);
+    
+    // STEP 6: Analyze fact-check results
+    const analysis = await analyzeFactChecks(factCheckResults, claim);
+    
+    console.log(`✅ [${contentId}] COMPLETE: ${analysis.verdict} (${analysis.confidence})`);
+    
+    // STEP 7: Store in user history
+    if (!factCheckMemory.has(senderId)) {
+      factCheckMemory.set(senderId, []);
+    }
+    const userHistory = factCheckMemory.get(senderId);
+    userHistory.push({
+      userId: senderId,
+      result: {
+        claim: claim,
+        analysis: analysis,
+        logicalAnalysis: logicalAnalysis,
+        originalText: messageText
+      },
+      timestamp: Date.now(),
+      contentId: contentId
+    });
+    
+    // Keep last 50 records
+    if (userHistory.length > 50) {
+      userHistory.splice(0, userHistory.length - 50);
+    }
+    
+    return {
+      success: true,
+      claim: claim,
+      analysis: analysis,
+      logicalAnalysis: logicalAnalysis,
+      sources: factCheckResults.length,
+      contentId: contentId
+    };
+    
+  } catch (error) {
+    console.error(`❌ [${contentId}] Error processing WhatsApp text:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Process WhatsApp media (images, videos, audio, documents)
+ */
+const processWhatsAppMedia = async (senderId, mediaData) => {
+  const contentId = uuidv4().substring(0, 8);
+  console.log(`📎 [${contentId}] Processing WhatsApp media for user: ${senderId}`);
+  console.log(`📎 [${contentId}] Media type: ${mediaData.type}`);
+  
+  try {
+    const mediaType = mediaData.type;
+    const caption = mediaData.caption || '';
+    
+    // For video, process like Instagram reel
+    if (mediaType === 'video') {
+      console.log(`🎥 [${contentId}] Processing WhatsApp video...`);
+      
+      // Save video data to temp file
+      const tempDir = process.env.TEMP_VIDEO_DIR || './temp/videos/';
+      await fs.ensureDir(tempDir);
+      const fileName = `whatsapp_${contentId}_${uuidv4()}.mp4`;
+      const videoPath = path.join(tempDir, fileName);
+      
+      await fs.writeFile(videoPath, mediaData.data);
+      console.log(`✅ [${contentId}] Video saved to: ${videoPath}`);
+      
+      let audioPath = null;
+      let framePaths = [];
+      
+      try {
+        // Extract audio and frames
+        [audioPath, framePaths] = await Promise.all([
+          extractAudio(videoPath),
+          extractVideoFrames(videoPath, 5)
+        ]);
+        
+        // Transcribe audio and analyze frames
+        const [transcription, videoAnalysis] = await Promise.all([
+          transcribeAudio(audioPath),
+          analyzeVideoFrames(framePaths)
+        ]);
+        
+        console.log(`✅ [${contentId}] Video analysis complete`);
+        
+        // Extract claim from video + caption
+        const claim = await extractClaim(transcription, caption, videoAnalysis);
+        
+        if (claim === 'No verifiable claim found') {
+          return {
+            success: false,
+            message: 'No verifiable claims found in this video.',
+            claim: claim,
+            contentId: contentId,
+            mediaInfo: { type: 'video' }
+          };
+        }
+        
+        // Fact-check the claim
+        const factCheckResults = await searchFactChecks(claim);
+        
+        if (factCheckResults.length === 0) {
+          return {
+            success: false,
+            message: 'No reliable sources found to verify this video claim.',
+            claim: claim,
+            contentId: contentId,
+            mediaInfo: { type: 'video' }
+          };
+        }
+        
+        const analysis = await analyzeFactChecks(factCheckResults, claim);
+        
+        // Store in memory
+        if (!factCheckMemory.has(senderId)) {
+          factCheckMemory.set(senderId, []);
+        }
+        const userHistory = factCheckMemory.get(senderId);
+        userHistory.push({
+          userId: senderId,
+          result: {
+            claim: claim,
+            analysis: analysis,
+            transcription: transcription,
+            videoAnalysis: videoAnalysis
+          },
+          timestamp: Date.now(),
+          contentId: contentId
+        });
+        
+        // Cleanup
+        await cleanupFiles(videoPath, audioPath, ...framePaths);
+        
+        return {
+          success: true,
+          claim: claim,
+          analysis: analysis,
+          sources: factCheckResults.length,
+          contentId: contentId,
+          mediaInfo: { type: 'video' }
+        };
+        
+      } finally {
+        // Always cleanup
+        const filesToCleanup = [videoPath, audioPath, ...framePaths].filter(Boolean);
+        if (filesToCleanup.length > 0) {
+          await cleanupFiles(...filesToCleanup);
+        }
+      }
+    }
+    
+    // For image, extract text using OCR (via Gemini Vision)
+    if (mediaType === 'image') {
+      console.log(`🖼️ [${contentId}] Processing WhatsApp image...`);
+      
+      // Use Gemini Vision to extract text from image
+      const imageBase64 = mediaData.data.toString('base64');
+      
+      const prompt = `Extract ALL text visible in this image. Include:
+- Main text content
+- Headlines or titles
+- Captions or subtitles
+- Any text overlays
+- Numbers or statistics
+
+If there's no text, respond with: "No text found in image"
+
+OUTPUT: Return only the extracted text, nothing else.`;
+
+      try {
+        const { result } = await makeGeminiAPICall(
+          MODELS.VISUAL_ANALYSIS,
+          GENERATION_CONFIGS.HIGH_ACCURACY,
+          prompt,
+          [{
+            inlineData: {
+              data: imageBase64,
+              mimeType: 'image/jpeg'
+            }
+          }]
+        );
+        
+        const extractedText = result.response.text().trim();
+        console.log(`✅ [${contentId}] Extracted text from image: "${extractedText.substring(0, 100)}..."`);
+        
+        // Combine extracted text with caption
+        const combinedText = caption ? `${caption}\n\n${extractedText}` : extractedText;
+        
+        if (extractedText === 'No text found in image') {
+          return {
+            success: false,
+            message: 'No text found in this image to fact-check.',
+            contentId: contentId,
+            mediaInfo: { type: 'image' }
+          };
+        }
+        
+        // Process the extracted text
+        const textResult = await processWhatsAppText(senderId, combinedText);
+        textResult.mediaInfo = { type: 'image' };
+        return textResult;
+        
+      } catch (error) {
+        console.log(`❌ [${contentId}] Error extracting text from image: ${error.message}`);
+        return {
+          success: false,
+          message: 'Could not extract text from this image.',
+          contentId: contentId,
+          mediaInfo: { type: 'image' }
+        };
+      }
+    }
+    
+    // For audio, transcribe and process
+    if (mediaType === 'audio') {
+      console.log(`🎵 [${contentId}] Processing WhatsApp audio...`);
+      
+      // Save audio to temp file
+      const audioDir = process.env.TEMP_AUDIO_DIR || './temp/audio/';
+      await fs.ensureDir(audioDir);
+      const audioPath = path.join(audioDir, `whatsapp_${contentId}_${uuidv4()}.mp3`);
+      
+      await fs.writeFile(audioPath, mediaData.data);
+      
+      try {
+        // Transcribe audio
+        const transcription = await transcribeAudio(audioPath);
+        console.log(`✅ [${contentId}] Audio transcribed: "${transcription.substring(0, 100)}..."`);
+        
+        // Process transcription as text
+        const textResult = await processWhatsAppText(senderId, transcription);
+        textResult.mediaInfo = { type: 'audio' };
+        
+        return textResult;
+        
+      } finally {
+        await cleanupFiles(audioPath);
+      }
+    }
+    
+    // Other media types not supported yet
+    return {
+      success: false,
+      message: `Media type '${mediaType}' is not supported for fact-checking yet.`,
+      contentId: contentId,
+      mediaInfo: { type: mediaType }
+    };
+    
+  } catch (error) {
+    console.error(`❌ [${contentId}] Error processing WhatsApp media:`, error);
+    throw error;
+  }
+};
+
 // Export the comprehensive functions for the Instagram webhook
 module.exports = {
   searchFactChecks,
@@ -1220,6 +1805,13 @@ module.exports = {
   analyzeVideoFrames,
   extractClaim,
   cleanupFiles,
+  // WhatsApp-specific functions
+  processWhatsAppText,
+  processWhatsAppMedia,
+  detectYouTubeLink,
+  extractYouTubeData,
+  analyzeLogicalConsistency,
+  extractClaimFromText,
   // Compatibility functions
   getUserFactCheckHistory: (userId) => factCheckMemory.get(userId) || [],
   generateDetailedExplanation: async (claim, analysis) => {

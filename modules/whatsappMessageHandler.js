@@ -7,9 +7,9 @@ const conversationState = new Map();
 
 // WhatsApp-specific fact-checking bot responses
 const botResponses = {
-  factCheckProcessing: "🔍 Processing your message for fact-checking... Please wait while I analyze the content.",
+  factCheckProcessing: "🔍 Analyzing your message for fact-checking... Please wait.",
   
-  factCheckComplete: (claim, analysis, mediaInfo = null) => {
+  factCheckComplete: (claim, analysis, logicalAnalysis = null, mediaInfo = null) => {
     const verdictIcon = analysis.verdict === 'True' ? '✅' : analysis.verdict === 'False' ? '❌' : '⚠️';
     const confidenceIcon = analysis.confidence === 'High' ? '🎯' : analysis.confidence === 'Medium' ? '📊' : '🤔';
     
@@ -30,21 +30,44 @@ const botResponses = {
     const sourceCount = analysis.sources || 0;
     const sourceText = sourceCount > 1 ? `${sourceCount} sources checked` : 'Multiple sources checked';
     
+    // Logical inconsistency warning
+    let logicalNote = '';
+    if (logicalAnalysis && logicalAnalysis.hasInconsistencies && logicalAnalysis.severity !== 'LOW') {
+      logicalNote = `\n⚠️ Logical issues detected (${logicalAnalysis.severity} severity)`;
+    }
+    
     // Media processing note (if significant)
     let mediaNote = '';
     if (mediaInfo && mediaInfo.type) {
-      mediaNote = `\n📎 Analyzed ${mediaInfo.type} content`;
+      if (mediaInfo.type === 'youtube_video') {
+        mediaNote = `\n🎥 Analyzed YouTube video`;
+      } else if (mediaInfo.type === 'image') {
+        mediaNote = `\n🖼️ Extracted text from image`;
+      } else if (mediaInfo.type === 'video') {
+        mediaNote = `\n📹 Analyzed video + audio`;
+      } else if (mediaInfo.type === 'audio') {
+        mediaNote = `\n🎵 Transcribed audio`;
+      } else {
+        mediaNote = `\n📎 Analyzed ${mediaInfo.type}`;
+      }
     }
     
     // Keep it under WhatsApp's character limit
     return `${verdict}
-${confidence} • ${sourceText}${mediaNote}
+${confidence} • ${sourceText}${logicalNote}${mediaNote}
 
 💬 Ask "tell me more" for details!`;
   },
   
   noClaimFound: (result = null) => {
     let message = "🤔 No factual claims found to fact-check.";
+    
+    if (result && result.logicalAnalysis && result.logicalAnalysis.hasInconsistencies) {
+      message = "🤔 I analyzed the text for logical issues, but couldn't find specific factual claims to verify.";
+      if (result.logicalAnalysis.severity === 'HIGH') {
+        message += `\n⚠️ Note: The text contains significant logical inconsistencies.`;
+      }
+    }
     
     if (result && result.mediaInfo) {
       message += `\n📎 Analyzed ${result.mediaInfo.type} content`;
@@ -350,32 +373,69 @@ const clearConversationState = (senderId) => {
   conversationState.delete(senderId);
 };
 
-// Process text messages
+// Process text messages with comprehensive fact-checking
 const processTextMessage = async (senderId, messageText) => {
   console.log(`💬 Processing WhatsApp text message from ${senderId}: "${messageText}"`);
   
   try {
+    // First check if this is a command or conversational message
     const response = await determineResponse(messageText, senderId);
     
-    if (response.type === 'interactive') {
-      await whatsappAPI.sendInteractiveMessage(
-        senderId, 
-        response.header, 
-        response.body, 
-        response.footer, 
-        response.buttons
-      );
-    } else if (response.type === 'list') {
-      await whatsappAPI.sendListMessage(
-        senderId,
-        response.header,
-        response.body,
-        response.footer,
-        response.buttonText,
-        response.sections
-      );
-    } else {
-      await whatsappAPI.sendMessage(senderId, response.text);
+    // If it's a command response, send it
+    if (response.needsFactCheck === false) {
+      if (response.type === 'interactive') {
+        await whatsappAPI.sendInteractiveMessage(
+          senderId, 
+          response.header, 
+          response.body, 
+          response.footer, 
+          response.buttons
+        );
+      } else if (response.type === 'list') {
+        await whatsappAPI.sendListMessage(
+          senderId,
+          response.header,
+          response.body,
+          response.footer,
+          response.buttonText,
+          response.sections
+        );
+      } else {
+        await whatsappAPI.sendMessage(senderId, response.text);
+      }
+      return;
+    }
+    
+    // Otherwise, process for fact-checking
+    console.log(`🔍 Message appears to contain factual claims, processing for fact-check...`);
+    
+    // Send processing message
+    await whatsappAPI.sendMessage(senderId, botResponses.factCheckProcessing);
+    
+    try {
+      // Process the text through comprehensive fact-checking
+      const result = await factChecker.processWhatsAppText(senderId, messageText);
+      
+      if (result.success) {
+        // Update conversation context
+        updateContextForNewContent(senderId, result.contentId, result.claim);
+        
+        // Send fact-check results
+        const responseMessage = botResponses.factCheckComplete(
+          result.claim, 
+          result.analysis, 
+          result.logicalAnalysis,
+          result.mediaInfo
+        );
+        await whatsappAPI.sendMessage(senderId, responseMessage);
+      } else {
+        // No claims found or not important enough
+        await whatsappAPI.sendMessage(senderId, botResponses.noClaimFound(result));
+      }
+      
+    } catch (factCheckError) {
+      console.error(`❌ Fact-check error for ${senderId}:`, factCheckError);
+      await whatsappAPI.sendMessage(senderId, botResponses.factCheckError);
     }
     
   } catch (error) {
@@ -427,7 +487,12 @@ const processMediaMessage = async (senderId, attachments) => {
           updateContextForNewContent(senderId, result.contentId, result.claim);
           
           // Send fact-check results
-          const responseMessage = botResponses.factCheckComplete(result.claim, result.analysis, result.mediaInfo);
+          const responseMessage = botResponses.factCheckComplete(
+            result.claim, 
+            result.analysis, 
+            null, // No logical analysis for media
+            result.mediaInfo
+          );
           await whatsappAPI.sendMessage(senderId, responseMessage);
         } else {
           // No claims found
@@ -469,7 +534,8 @@ const determineResponse = async (messageText, senderId) => {
     const history = factChecker.getUserFactCheckHistory(senderId);
     return {
       type: 'text',
-      text: botResponses.factCheckHistory(history)
+      text: botResponses.factCheckHistory(history),
+      needsFactCheck: false
     };
   }
 
@@ -493,7 +559,8 @@ const determineResponse = async (messageText, senderId) => {
         if (detailedResult && detailedResult.response) {
           return {
             type: 'text',
-            text: detailedResult.response
+            text: detailedResult.response,
+            needsFactCheck: false
           };
         }
       }
@@ -503,7 +570,8 @@ const determineResponse = async (messageText, senderId) => {
     
     return {
       type: 'text',
-      text: "Share content first so I can fact-check something for you! 📱🔍"
+      text: "Share content first so I can fact-check something for you! 📱🔍",
+      needsFactCheck: false
     };
   }
 
@@ -538,7 +606,8 @@ const determineResponse = async (messageText, senderId) => {
               console.log(`❓ Ambiguous question detected with ${recentFactChecks.length} recent fact-checks`);
               return {
                 type: 'text',
-                text: createClarificationResponse(messageText, recentFactChecks)
+                text: createClarificationResponse(messageText, recentFactChecks),
+                needsFactCheck: false
               };
             }
           }
@@ -559,7 +628,8 @@ const determineResponse = async (messageText, senderId) => {
                 console.log(`✅ Generated contextual response with content context`);
                 return {
                   type: 'text',
-                  text: withContext.length > 1000 ? contextualResponse : withContext
+                  text: withContext.length > 1000 ? contextualResponse : withContext,
+                  needsFactCheck: false
                 };
               }
             }
@@ -577,7 +647,8 @@ const determineResponse = async (messageText, senderId) => {
               
               return {
                 type: 'text',
-                text: followUpResponse
+                text: followUpResponse,
+                needsFactCheck: false
               };
             }
           } catch (error) {
@@ -592,6 +663,22 @@ const determineResponse = async (messageText, senderId) => {
     console.log(`📭 No previous fact-checks found for user ${senderId}`);
   }
 
+  // Check if message looks like it needs fact-checking
+  const needsFactCheck = messageText.length > 30 && (
+    /\b(news|breaking|reported|announced|confirmed|died|killed|bought|sold|policy|law|government|company)\b/i.test(messageText) ||
+    /https?:\/\//i.test(messageText) || // Contains URL
+    messageText.split(' ').length > 10 // Longer messages are more likely to contain claims
+  );
+  
+  // If it looks like a claim, mark for fact-checking
+  if (needsFactCheck && !isBasicCommand(text)) {
+    console.log(`📝 Message appears to contain claims, marking for fact-check processing`);
+    return {
+      type: 'text',
+      needsFactCheck: true // This will trigger fact-checking in processTextMessage
+    };
+  }
+
   // Use AI for general conversation instead of default responses
   if (!isBasicCommand(text)) {
     console.log(`🤖 Using AI for general conversation: "${messageText}"`);
@@ -601,7 +688,8 @@ const determineResponse = async (messageText, senderId) => {
       if (aiResponse && aiResponse.response) {
         return {
           type: 'text',
-          text: aiResponse.response
+          text: aiResponse.response,
+          needsFactCheck: false
         };
       }
     } catch (error) {
@@ -613,7 +701,8 @@ const determineResponse = async (messageText, senderId) => {
   // Default fallback for fact-checking bot
   return {
     type: 'text',
-    text: "🔍 I fact-check news, articles, and media! Share content with factual claims and I'll verify them. You can also ask about previous checks!"
+    text: "🔍 I fact-check news, articles, and media! Share content with factual claims and I'll verify them. You can also ask about previous checks!",
+    needsFactCheck: false
   };
 };
 
